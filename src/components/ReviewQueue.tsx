@@ -3,6 +3,7 @@ import {
   AlertCircle,
   CheckCircle2,
   ClipboardCheck,
+  ClipboardPaste,
   Copy,
   ExternalLink,
   Inbox,
@@ -576,16 +577,6 @@ interface ExtractUrlResponse {
 }
 
 /**
- * ยืนยันลิงก์แบบทีละข่าว
- *
- * Google News ให้พาดหัวและชื่อสำนักข่าว แต่เข้ารหัสลิงก์ไว้ จึงไม่มีทางรู้ URL ต้นทาง
- * โดยอัตโนมัติ (ทดสอบแล้วทั้งการถอดลิงก์ การหา RSS ของสำนักนั้น และการค้นในเว็บสำนัก — ไม่ได้ทั้งหมด)
- * งานนี้จึงต้องใช้คนเสมอ หน้าจอนี้ทำให้เหลือ 3 ขั้น: กดเปิดข่าว → คัดลอก URL → วาง
- *
- * ช่องกรอกโฟกัสอยู่ตลอดและส่งเมื่อวาง จึงไม่ต้องคลิกช่องและไม่ต้องกดปุ่ม
- * เสร็จแล้วเลื่อนไปข่าวถัดไปเอง
- */
-/**
  * เคสที่ถูกปฏิเสธไว้ + ทางกู้คืน
  *
  * เดิม `useIncidents` คำนวณ `rejected` ไว้แล้วแต่ไม่มีคอมโพเนนต์ไหนใช้ —
@@ -737,6 +728,22 @@ interface BackgroundJob {
 /** ยิงงานสกัดพร้อมกันได้กี่ราย — กัน rate limit ต่อนาทีของ Gemini */
 const EXTRACT_CONCURRENCY = 2;
 
+/**
+ * ยืนยันลิงก์แบบทีละข่าว
+ *
+ * Google News ให้พาดหัวและชื่อสำนักข่าว แต่เข้ารหัสลิงก์ไว้ จึงไม่มีทางรู้ URL ต้นทาง
+ * โดยอัตโนมัติ (ทดสอบแล้วทั้งการถอดลิงก์ การหา RSS ของสำนักนั้น และการค้นในเว็บสำนัก — ไม่ได้ทั้งหมด)
+ * งานนี้จึงต้องใช้คนเสมอ หน้าจอนี้ทำให้เหลือ 3 ขั้น: กดเปิดข่าว → คัดลอก URL → ยืนยัน
+ *
+ * ยืนยันได้ 3 ทาง ทุกทางไปจบที่ submitUrl เหมือนกัน:
+ *   1. วางในช่อง (Cmd+V) — ส่งทันทีโดยไม่ต้องกดปุ่ม เร็วที่สุดและช่องโฟกัสรออยู่แล้ว
+ *   2. กดปุ่ม "ยืนยันลิงก์นี้" — ไม่ต้องวางเลย ปุ่มไปหยิบลิงก์จากคลิปบอร์ดมาให้เอง
+ *   3. พิมพ์เองแล้วกด Enter
+ *
+ * ทาง 2 มีเพราะทาง 1 พังเงียบได้หลายแบบ: สลับแท็บกลับมาแล้วโฟกัสหลุด วางด้วยเมาส์ไม่ได้
+ * หรือผู้ใช้มองไม่เห็นว่าต้องทำอะไรเพราะไม่มีปุ่มให้กด
+ * เสร็จแล้วเลื่อนไปข่าวถัดไปเอง
+ */
 const NeedsUrlPanel: React.FC<{
   canEdit: boolean;
   onToast: (message: string, type?: 'success' | 'info') => void;
@@ -752,6 +759,19 @@ const NeedsUrlPanel: React.FC<{
   const [blockedUrl, setBlockedUrl] = useState<string | null>(null);
   const [done, setDone] = useState(0);
   const [jobs, setJobs] = useState<BackgroundJob[]>([]);
+  /**
+   * ค่าที่อยู่ในช่องกรอก — ต้องเป็น controlled เพราะมีปุ่มยืนยันที่ต้องอ่านค่าไปใช้
+   * เดิมช่องผูกกับ onPaste อย่างเดียว พิมพ์แล้วกด Enter จึงไม่เกิดอะไรขึ้นเลย
+   */
+  const [urlValue, setUrlValue] = useState('');
+  const [textValue, setTextValue] = useState('');
+  /** กำลังขออ่านคลิปบอร์ด — แยกจาก busy เพราะยังไม่ได้ยิง API และต้องไม่ปิดช่องกรอก */
+  const [reading, setReading] = useState(false);
+  /**
+   * นับวินาทีเฉพาะทางเนื้อข่าว ซึ่งเป็นทางเดียวที่ยังต้องยืนรอ AI (5-15 วินาที)
+   * ทาง URL ไม่ต้องรอเพราะสกัดเบื้องหลัง
+   */
+  const elapsed = useElapsed(busy && blockedUrl !== null);
 
   const urlInput = useRef<HTMLInputElement>(null);
   const textInput = useRef<HTMLTextAreaElement>(null);
@@ -763,6 +783,11 @@ const NeedsUrlPanel: React.FC<{
   const queueRef = useRef<BackgroundJob[]>([]);
   const runningRef = useRef(0);
   const aliveRef = useRef(true);
+  /**
+   * กันกดปุ่มยืนยันรัวจนยิง attach ซ้ำ
+   * ต้องเป็น ref ไม่ใช่ state — สองคลิกใน tick เดียวกันอ่าน state ตัวเดิมได้ทั้งคู่แล้วผ่านทั้งคู่
+   */
+  const confirmLock = useRef(false);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -797,6 +822,11 @@ const NeedsUrlPanel: React.FC<{
   // ข้ามขั้นขอ URL ไปขอเนื้อข่าวเลย ไม่ต้องให้ผู้ใช้ไปหา URL เดิมมาวางซ้ำ
   useEffect(() => {
     setBlockedUrl(current?.url ?? null);
+    // ค่าที่ค้างจากข่าวก่อนหน้าห้ามไหลไปข่าวถัดไป — จะกลายเป็นบันทึก URL ผิดข่าว
+    // ครอบคลุมทุกทางที่เปลี่ยนข่าว ทั้ง consumeCurrent, skip, การเอากลับเข้าคิว
+    // และข่าวสุดท้าย (current?.id เปลี่ยนจาก string เป็น undefined effect ก็ยังทำงาน)
+    setUrlValue('');
+    setTextValue('');
   }, [current?.id]);
 
   // โฟกัสช่องที่ต้องใช้ทันทีที่เปลี่ยนข่าว ผู้ใช้จึงกด Cmd+V ได้เลยหลังสลับแท็บกลับมา
@@ -895,8 +925,21 @@ const NeedsUrlPanel: React.FC<{
     if (!current || busy) return;
     const trimmed = value.trim();
     if (!trimmed) return;
+    // ด่านตรวจอยู่ตรงนี้ที่เดียว ทั้งการวาง การกด Enter และการกดปุ่มยืนยันจึงเจอเกณฑ์เดียวกัน
     if (!/^https?:\/\//i.test(trimmed)) {
-      onToast('ที่วางมาไม่ใช่ URL — ต้องขึ้นต้นด้วย http:// หรือ https://', 'info');
+      // เลี่ยงคำว่า "ที่วางมา" เพราะตอนนี้ค่ามาได้ทั้งจากการพิมพ์ การวาง และคลิปบอร์ด
+      onToast('ยังไม่ใช่ URL — ต้องขึ้นต้นด้วย http:// หรือ https://', 'info');
+      urlInput.current?.focus();
+      return;
+    }
+    // ดักตั้งแต่ฝั่งเบราว์เซอร์ — /api/leads/attach ปฏิเสธลิงก์นี้อยู่แล้ว ไม่ต้องเสียรอบเดินทาง
+    // และเป็นเคสที่เกิดง่ายมาก เพราะผู้ใช้เพิ่งกดเปิดลิงก์ Google News มาหมาดๆ
+    if (/^https?:\/\/news\.google\.com\//i.test(trimmed)) {
+      onToast(
+        'นี่คือลิงก์ Google News ซึ่ง Google เข้ารหัสไว้ ใช้ดึงเนื้อข่าวไม่ได้ — กดเปิดข่าวต้นทางแล้วคัดลอก URL ของสำนักข่าวมาแทน',
+        'info'
+      );
+      urlInput.current?.focus();
       return;
     }
 
@@ -944,7 +987,8 @@ const NeedsUrlPanel: React.FC<{
     if (!current || busy || !blockedUrl) return;
     const trimmed = value.trim();
     if (trimmed.length < 200) {
-      onToast('เนื้อข่าวสั้นเกินไป — ต้องอย่างน้อย 200 ตัวอักษร', 'info');
+      onToast(`เนื้อข่าวสั้นเกินไป (${trimmed.length} ตัวอักษร) — ต้องอย่างน้อย 200 ตัวอักษร`, 'info');
+      textInput.current?.focus();
       return;
     }
 
@@ -968,6 +1012,91 @@ const NeedsUrlPanel: React.FC<{
       onToast(String(err?.message ?? 'สกัดข้อมูลไม่สำเร็จ'), 'info');
     } finally {
       setBusy(false);
+    }
+  };
+
+  /**
+   * หาค่าที่จะยืนยัน — ใช้สิ่งที่อยู่ในช่องก่อน ถ้าช่องว่างจึงไปหยิบจากคลิปบอร์ดให้เอง
+   *
+   * นี่คือหัวใจของ "กดยืนยันได้เลยไม่ต้องวาง" — ผู้ใช้คัดลอก URL จากแท็บข่าว
+   * แล้วกลับมากดปุ่มได้เลย ไม่ต้องคลิกช่องกรอกและไม่ต้องกด Cmd+V
+   *
+   * readText() ต้องถูกเรียกก่อน await อื่นเสมอ — Safari ให้สิทธิ์เฉพาะ task เดียวกับที่ผู้ใช้กดปุ่ม
+   * ถ้ามี await คั่นก่อนหน้าจะถือว่าหมด user gesture แล้วปฏิเสธ
+   *
+   * คืน null = อ่านไม่ได้ (แจ้งเหตุผลและคืนโฟกัสให้ผู้ใช้วางเองแล้ว ผู้เรียกไม่ต้องแจ้งซ้ำ)
+   */
+  const valueToConfirm = async (
+    typed: string,
+    what: 'ลิงก์' | 'เนื้อข่าว',
+    focusBack: () => void
+  ): Promise<string | null> => {
+    const trimmed = typed.trim();
+    if (trimmed) return trimmed;
+
+    // navigator.clipboard มีเฉพาะ secure context (https หรือ localhost)
+    if (typeof navigator.clipboard?.readText !== 'function') {
+      onToast(
+        `เบราว์เซอร์นี้อ่านคลิปบอร์ดให้ไม่ได้ — กด Cmd+V (Ctrl+V) วาง${what}ในช่องแล้วกดยืนยันอีกครั้ง`,
+        'info'
+      );
+      focusBack();
+      return null;
+    }
+
+    try {
+      const fromClipboard = (await navigator.clipboard.readText()).trim();
+      if (!fromClipboard) {
+        onToast(`คลิปบอร์ดว่าง — คัดลอก${what}จากหน้าข่าวก่อน แล้วกดยืนยันอีกครั้ง`, 'info');
+        focusBack();
+        return null;
+      }
+      return fromClipboard;
+    } catch {
+      // ผู้ใช้ไม่อนุญาต หรือเบราว์เซอร์ไม่รองรับ readText — ทางเดิมคือวางเองยังใช้ได้เสมอ
+      onToast(
+        `เบราว์เซอร์ไม่อนุญาตให้อ่านคลิปบอร์ด — กด Cmd+V (Ctrl+V) วาง${what}ในช่องแล้วกดยืนยันอีกครั้ง`,
+        'info'
+      );
+      focusBack();
+      return null;
+    }
+  };
+
+  /**
+   * ปุ่มยืนยันลิงก์ — ใช้ค่าที่พิมพ์หรือวางไว้ ถ้าช่องว่างจะไปหยิบจากคลิปบอร์ดให้เอง
+   *
+   * ห้ามปิดปุ่มตอนช่องว่าง — ช่องว่างคือกรณีที่ปุ่มนี้มีไว้ทำงานโดยเฉพาะ
+   */
+  const confirmUrl = async () => {
+    if (confirmLock.current || busy || !current) return;
+    confirmLock.current = true;
+    setReading(true);
+    try {
+      const value = await valueToConfirm(urlValue, 'ลิงก์', () => urlInput.current?.focus());
+      if (value === null) return;
+      // โชว์สิ่งที่หยิบมาจากคลิปบอร์ด ถ้าผิดจะได้แก้ต่อได้เลย ไม่ต้องเดาว่าระบบเห็นอะไร
+      setUrlValue(value);
+      await submitUrl(value);
+    } finally {
+      setReading(false);
+      confirmLock.current = false;
+    }
+  };
+
+  /** ปุ่มยืนยันเนื้อข่าว (เฉพาะสำนักที่บล็อกการดึงหน้าเว็บ) — เกณฑ์ 200 ตัวอักษรอยู่ใน submitText */
+  const confirmText = async () => {
+    if (confirmLock.current || busy || !current || !blockedUrl) return;
+    confirmLock.current = true;
+    setReading(true);
+    try {
+      const value = await valueToConfirm(textValue, 'เนื้อข่าว', () => textInput.current?.focus());
+      if (value === null) return;
+      setTextValue(value);
+      await submitText(value);
+    } finally {
+      setReading(false);
+      confirmLock.current = false;
     }
   };
 
@@ -1093,47 +1222,104 @@ const NeedsUrlPanel: React.FC<{
             <div className="space-y-2">
               <label className="block text-[13px] font-sans text-red-700">
                 สำนักนี้บล็อกการดึงหน้าเว็บจากเซิร์ฟเวอร์ — คัดลอกเนื้อข่าวจากหน้าที่เปิดไว้มาวางที่นี่
+                หรือคัดลอกแล้วกด “ยืนยันเนื้อข่าว” ระบบจะหยิบจากคลิปบอร์ดให้เอง
                 <span className="block text-neutral-600 font-mono mt-0.5 truncate">URL ที่จะบันทึก: {blockedUrl}</span>
               </label>
               <textarea
                 ref={textInput}
                 rows={7}
+                value={textValue}
                 disabled={busy}
+                onChange={(e) => setTextValue(e.target.value)}
                 onPaste={(e) => {
                   const text = e.clipboardData.getData('text');
                   if (text.trim().length > 200) {
                     e.preventDefault();
+                    // เก็บไว้ให้เห็นด้วย เผื่อสกัดไม่สำเร็จจะได้ไม่ต้องกลับไปคัดลอกใหม่
+                    setTextValue(text.trim());
                     void submitText(text);
                   }
                 }}
                 placeholder="วางเนื้อข่าวที่นี่ (Cmd+V) แล้วระบบทำต่อเอง"
                 className="w-full bg-neutral-50 border border-red-200 rounded-sm p-3.5 text-xs text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-red-400 leading-relaxed font-sans disabled:opacity-50"
               />
-              <button
-                onClick={() => setBlockedUrl(null)}
-                className="text-[13px] font-mono text-neutral-600 hover:text-neutral-700"
-              >
-                ← กลับไปวาง URL
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => void confirmText()}
+                  disabled={!canEdit || busy || reading}
+                  title="ยังไม่ได้วางก็กดได้ — ระบบจะหยิบเนื้อข่าวที่คัดลอกไว้จากคลิปบอร์ดให้เอง"
+                  className="shrink-0 px-5 py-2.5 rounded-sm bg-neutral-900 hover:bg-black disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-mono font-bold transition-all shadow-md flex items-center gap-2"
+                >
+                  {busy || reading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <ClipboardPaste className="w-3.5 h-3.5" />
+                  )}
+                  <span>ยืนยันเนื้อข่าว</span>
+                </button>
+                <span className="text-[13px] font-mono text-neutral-600">
+                  {busy
+                    ? `กำลังสกัดข้อมูล... ${elapsed} วินาที (ทางนี้ต้องรอ AI)`
+                    : `${textValue.trim().length} / 200 ตัวอักษร`}
+                </span>
+                <button
+                  onClick={() => {
+                    setBlockedUrl(null);
+                    setTextValue('');
+                  }}
+                  className="ml-auto text-[13px] font-mono text-neutral-600 hover:text-neutral-700"
+                >
+                  ← กลับไปวาง URL
+                </button>
+              </div>
             </div>
           ) : (
             <div className="space-y-2">
-              <input
-                ref={urlInput}
-                type="url"
-                disabled={busy}
-                onPaste={(e) => {
-                  const text = e.clipboardData.getData('text');
-                  if (/^https?:\/\//i.test(text.trim())) {
-                    e.preventDefault();
-                    void submitUrl(text);
-                  }
-                }}
-                placeholder="วาง URL ของข่าวที่นี่ (Cmd+V) แล้วระบบทำต่อเอง"
-                className="w-full bg-neutral-50 border border-neutral-300 rounded-sm px-4 py-3.5 text-xs text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-red-500 font-mono disabled:opacity-50"
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  ref={urlInput}
+                  type="url"
+                  value={urlValue}
+                  disabled={busy}
+                  onChange={(e) => setUrlValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    // มีปุ่มแล้วต้องรับ Enter ด้วย — ช่องกรอกที่กด Enter แล้วเงียบคือบั๊ก
+                    // isComposing กันไม่ให้ Enter ที่ใช้ยืนยันคำภาษาไทยจาก IME ไปสั่งบันทึก
+                    if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      void confirmUrl();
+                    }
+                  }}
+                  onPaste={(e) => {
+                    // ทางลัดเดิม: วางแล้วส่งทันทีโดยไม่ต้องกดปุ่ม เร็วที่สุดสำหรับคนที่ชินแล้ว
+                    const text = e.clipboardData.getData('text');
+                    if (/^https?:\/\//i.test(text.trim())) {
+                      e.preventDefault();
+                      // เก็บไว้ให้เห็นด้วย เผื่อบันทึกไม่สำเร็จจะได้ไม่ต้องกลับไปคัดลอกใหม่
+                      setUrlValue(text.trim());
+                      void submitUrl(text);
+                    }
+                  }}
+                  placeholder="วาง URL ของข่าวที่นี่ (Cmd+V) หรือพิมพ์แล้วกด Enter"
+                  className="flex-1 min-w-[240px] bg-neutral-50 border border-neutral-300 rounded-sm px-4 py-3.5 text-xs text-neutral-900 placeholder-neutral-400 focus:outline-none focus:border-red-500 font-mono disabled:opacity-50"
+                />
+                <button
+                  onClick={() => void confirmUrl()}
+                  disabled={!canEdit || busy || reading}
+                  title="ยังไม่ได้วางก็กดได้ — ระบบจะหยิบลิงก์ที่คัดลอกไว้จากคลิปบอร์ดให้เอง"
+                  className="shrink-0 px-5 py-3.5 rounded-sm bg-neutral-900 hover:bg-black disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-mono font-bold transition-all shadow-md flex items-center gap-2"
+                >
+                  {busy || reading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <ClipboardPaste className="w-3.5 h-3.5" />
+                  )}
+                  <span>ยืนยันลิงก์นี้</span>
+                </button>
+              </div>
               <p className="text-[13px] text-neutral-600 font-sans">
-                กดเปิดข่าวด้านบน คัดลอก URL แล้วกลับมาวาง — ระบบไปข่าวถัดไปทันที ไม่ต้องรอ AI
+                กดเปิดข่าวด้านบน คัดลอก URL แล้วกลับมากด “ยืนยันลิงก์นี้” ได้เลย ไม่ต้องวาง —
+                ระบบหยิบจากคลิปบอร์ดให้เอง แล้วไปข่าวถัดไปทันที ไม่ต้องรอ AI
               </p>
               <p className="text-[13px] text-neutral-600 font-sans">
                 เร็วกว่านี้ได้อีก:{' '}

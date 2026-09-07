@@ -2,7 +2,8 @@
  * ทดสอบระบบในมุมผู้ใช้งาน — ขับ Chrome จริงผ่าน Playwright
  *
  * ตรวจสิ่งที่ทดสอบด้วย API ไม่ได้: การมองเห็นตามสิทธิ์ · โฟกัสช่องกรอกอัตโนมัติ ·
- * การส่งเมื่อวาง · การเลื่อนไปข่าวถัดไปเอง · ชื่อบุคคลไม่หลุดสู่หน้าสาธารณะ
+ * การส่งเมื่อวาง · การกดปุ่มยืนยันโดยไม่ต้องวาง (อ่านคลิปบอร์ดเอง) ·
+ * การเลื่อนไปข่าวถัดไปเอง · ชื่อบุคคลไม่หลุดสู่หน้าสาธารณะ
  *
  * ใช้ข้อมูลทดสอบที่มีคำนำหน้า [E2E] แยกจากคิวงานจริง และล้างทิ้งเมื่อจบเสมอ
  *
@@ -50,6 +51,13 @@ async function main() {
     browser = await chromium.launch({ channel: 'chrome', headless: !HEADED });
     const page = await browser.newPage({ viewport: { width: 1440, height: 960 } } as never);
     page.on('pageerror', (e) => check(false, 'หน้าเว็บมี JavaScript error', e.message.slice(0, 80)));
+
+    // ปุ่มยืนยันลิงก์อ่านคลิปบอร์ดเอง จึงต้องเปิดสิทธิ์ให้ทดสอบเส้นทางนั้นได้
+    // ถ้าเบราว์เซอร์ไม่ให้ ก็ข้ามเฉพาะเทสต์นั้นไป ไม่ทำให้ทั้งชุดล้ม
+    await page
+      .context()
+      .grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE })
+      .catch(() => undefined);
 
     /* ═══════════ 1. ผู้ไม่ล็อกอิน ═══════════ */
     section('1. ผู้เยี่ยมชมทั่วไป (ไม่ล็อกอิน)');
@@ -139,12 +147,57 @@ async function main() {
       'ช่องกรอกถูกโฟกัสอัตโนมัติ (วางได้เลยไม่ต้องคลิก)'
     );
 
+    // เดิมช่องนี้ผูกกับ onPaste อย่างเดียว พิมพ์แล้วกด Enter ไม่เกิดอะไรขึ้นเลย
+    // ค่าที่ใส่ไม่ใช่ URL จึงตกด่านฝั่งเบราว์เซอร์ ไม่ยิง API ไม่แตะข้อมูลจริง
+    await urlBox.fill('ยังไม่ใช่ลิงก์');
+    check(
+      (await urlBox.inputValue()) === 'ยังไม่ใช่ลิงก์',
+      'ช่องกรอกรับการพิมพ์ ไม่ใช่รับเฉพาะการวาง'
+    );
+    await urlBox.press('Enter');
+    await page.waitForTimeout(600);
+    check(
+      (await bodyText(page)).includes('ยังไม่ใช่ URL'),
+      'กด Enter ด้วยข้อความที่ไม่ใช่ลิงก์แล้วเตือน ไม่ยิง API'
+    );
+    await urlBox.fill('');
+
     const firstTitle = await page.locator('h3').first().innerText();
     check(
       await page.getByRole('button', { name: /^ไม่เกี่ยวข้อง$/ }).isVisible(),
       'มีปุ่มไม่เกี่ยวข้อง'
     );
     check(await page.getByRole('button', { name: /^ข้าม$/ }).isVisible(), 'มีปุ่มข้าม');
+
+    const confirmBtn = page.getByRole('button', { name: /^ยืนยันลิงก์นี้$/ });
+    check(await confirmBtn.isVisible(), 'มีปุ่มยืนยันลิงก์ข้างช่องกรอก');
+
+    /* ---- หัวใจของปุ่มนี้: ผู้ใช้ไม่ต้องวาง ปุ่มไปหยิบจากคลิปบอร์ดเอง ----
+     *
+     * ใช้ลิงก์ Google News เป็นตัวทดสอบ เพราะระบบต้องปฏิเสธตั้งแต่ฝั่งเบราว์เซอร์
+     * จึงพิสูจน์ได้ทั้งว่าอ่านคลิปบอร์ดสำเร็จและว่าด่านทำงาน โดยไม่แตะข้อมูลจริงเลย
+     */
+    const clipboardOk = await page
+      .evaluate(() => navigator.clipboard.writeText('https://news.google.com/rss/articles/E2ECLIP'))
+      .then(() => true)
+      .catch(() => false);
+
+    if (!clipboardOk) {
+      console.log('  – ข้ามการทดสอบอ่านคลิปบอร์ด (เบราว์เซอร์ไม่ให้เขียนคลิปบอร์ดในโหมดนี้)');
+    } else {
+      await urlBox.fill('');
+      await confirmBtn.click();
+      await page.waitForTimeout(900);
+      check(
+        (await urlBox.inputValue()).includes('news.google.com'),
+        'กดยืนยันโดยไม่ต้องวาง — ปุ่มหยิบลิงก์จากคลิปบอร์ดมาให้เอง'
+      );
+      check(
+        /Google News/.test(await bodyText(page)),
+        'ลิงก์ Google News ถูกปฏิเสธตั้งแต่ฝั่งเบราว์เซอร์ ไม่เสียรอบเรียก API'
+      );
+      await urlBox.fill('');
+    }
 
     // ข้าม → ต้องเปลี่ยนข่าวแต่ไม่หายจากคิว (ไม่แตะข้อมูล ปลอดภัยเสมอ)
     await page.getByRole('button', { name: /^ข้าม$/ }).click();
