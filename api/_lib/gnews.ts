@@ -82,7 +82,25 @@ export async function resolveGoogleNewsUrl(
   link: string,
   opts: { timeoutMs?: number } = {}
 ): Promise<ResolveResult> {
-  const timeoutMs = opts.timeoutMs ?? 12000;
+  // ห้ามให้อะไรหลุดออกไปเป็น exception — ผู้เรียกอยู่บนเส้นทางที่ผู้ใช้กดปุ่มรออยู่
+  // ถ้าหลุดไปจะกลายเป็น 500 ที่ไม่มีข้อความบอกอะไรเลย
+  try {
+    return await resolve(link, opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  } catch (err: any) {
+    return { url: null, error: `ถอดลิงก์ล้มเหลวผิดคาด: ${String(err?.message ?? err).slice(0, 200)}` };
+  }
+}
+
+/**
+ * งบเวลาต่อหนึ่งคำขอ (มี 2 คำขอต่อการถอด 1 ลิงก์ จึงกินได้มากสุดราวสองเท่าของค่านี้)
+ *
+ * เดิมตั้งไว้ 12 วินาที ซึ่งรวมแล้วเกิน 24 วินาที — เสี่ยงชนเพดานเวลาของ serverless
+ * แล้วกลายเป็น 500 เปล่าๆ ที่ผู้ใช้อ่านไม่รู้เรื่อง ปกติถอดเสร็จใน ~350 ms
+ * ถ้าเกิน 6 วินาทีแปลว่ามีอะไรผิดปกติแล้ว ถอยไปให้คนวาง URL เองเร็วกว่ารอต่อ
+ */
+const DEFAULT_TIMEOUT_MS = 6000;
+
+async function resolve(link: string, timeoutMs: number): Promise<ResolveResult> {
   const id = articleId(link);
   if (!id) return { url: null, error: 'ลิงก์นี้ไม่ใช่รูปแบบ news.google.com/articles ที่ถอดได้' };
 

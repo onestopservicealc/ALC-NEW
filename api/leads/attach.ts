@@ -57,9 +57,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
-      const resolved = await resolveGoogleNewsUrl(lead.gnews_link);
+      // ถอดอัตโนมัติพังได้เสมอเพราะพึ่ง endpoint ภายในของ Google
+      // ห้ามให้พังแบบ 500 เด็ดขาด — ต้องกลายเป็นทางถอยให้คนวาง URL เองทุกกรณี
+      const resolved = await resolveGoogleNewsUrl(lead.gnews_link).catch((err) => ({
+        url: null as string | null,
+        error: `เรียกตัวถอดลิงก์ไม่สำเร็จ: ${String((err as Error)?.message ?? err).slice(0, 200)}`,
+      }));
+
       if (!resolved.url) {
-        // ถอดอัตโนมัติพังได้เสมอเพราะพึ่ง endpoint ภายในของ Google — ต้องมีทางถอยให้คนทำต่อ
+        // log ไว้ให้เห็นใน Vercel logs — ไม่งั้นเวลามันพังจะไล่หาสาเหตุไม่ได้เลย
+        console.warn('[attach] ถอดลิงก์ไม่สำเร็จ', { articleId, reason: resolved.error });
         return res.status(422).json({
           error: `ถอดลิงก์อัตโนมัติไม่สำเร็จ (${resolved.error}) — กรุณาเปิดข่าวแล้ววาง URL เอง`,
           needsManualUrl: true,
@@ -82,12 +89,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const canonical = canonicalizeUrl(url);
 
     /* ---- มีเคสของ URL นี้อยู่แล้วหรือไม่ — ปิด lead ไปเลย ไม่ต้องเปลืองโควตา AI ---- */
-    const { data: existing } = await db
+    //
+    // ใช้ .in() ไม่ใช่ .or() — .or() ต่อสตริงตัวกรองเอง ถ้า URL มีจุลภาคหรือวงเล็บ
+    // (เจอบ่อยใน URL ที่ถอดมาจาก Google News ซึ่งมักพก query string มาด้วย)
+    // ตัวกรองจะเพี้ยนจนหาไม่เจอ แล้วบันทึกซ้ำเงียบๆ — .in() ใส่เครื่องหมายคำพูดให้เอง
+    const { data: existing, error: lookupError } = await db
       .from('incidents')
       .select('id, seq, status')
-      .or(`url.eq.${url},url.eq.${canonical}`)
+      .in('url', [url, canonical])
       .limit(1)
       .maybeSingle();
+
+    // เดิมกลืน error ทิ้ง ทำให้ด่านกันซ้ำพังโดยไม่มีใครรู้ — อย่างน้อยต้องเห็นใน log
+    if (lookupError) console.warn('[attach] ตรวจ URL ซ้ำไม่สำเร็จ', lookupError.message);
 
     if (existing) {
       await linkArticleToUrl(db, articleId, url, canonical);

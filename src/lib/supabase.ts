@@ -58,13 +58,29 @@ export async function callApi<T>(path: string, body?: unknown): Promise<T> {
     body: JSON.stringify(body ?? {}),
   });
 
-  const json = await res.json().catch(() => ({}));
+  // อ่านเป็นข้อความก่อนแล้วค่อยแปลง — เวลาแพลตฟอร์มพัง (ฟังก์ชัน crash หรือหมดเวลา)
+  // มันตอบเป็น HTML ไม่ใช่ JSON ถ้า .json() ไปเลยจะได้ {} แล้วสาเหตุจริงหายหมด
+  const raw = await res.text();
+  let json: unknown = {};
+  let wasJson = true;
+  try {
+    json = raw ? JSON.parse(raw) : {};
+  } catch {
+    wasJson = false;
+  }
+
   if (!res.ok) {
+    const serverMessage = (json as any)?.error;
     const err = new Error(
-      (json as any)?.error || `เรียก ${path} ไม่สำเร็จ (HTTP ${res.status})`
+      serverMessage ||
+        (wasJson
+          ? `เรียก ${path} ไม่สำเร็จ (HTTP ${res.status})`
+          : // ไม่ใช่ JSON = ไม่ได้มาจากโค้ดเรา แต่มาจากแพลตฟอร์ม
+            `เซิร์ฟเวอร์ล้มเหลว (HTTP ${res.status}) ที่ ${path} — ` +
+            'ฟังก์ชันอาจ crash หรือทำงานนานเกินกำหนด ดูสาเหตุจริงได้ใน log ของเซิร์ฟเวอร์')
     ) as ApiError;
     err.status = res.status;
-    err.payload = (json ?? {}) as Record<string, unknown>;
+    err.payload = (wasJson ? (json ?? {}) : {}) as Record<string, unknown>;
     throw err;
   }
   return json as T;
