@@ -1,0 +1,24 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "functions": {
+    "api/**/*.ts": {
+      "maxDuration": 300
+    }
+  },
+  "crons": [
+    { "path": "/api/cron/tick", "schedule": "0 0 * * *" },
+    { "path": "/api/cron/tick", "schedule": "0 3 * * *" },
+    { "path": "/api/cron/tick", "schedule": "0 6 * * *" },
+    { "path": "/api/cron/tick", "schedule": "0 9 * * *" },
+    { "path": "/api/cron/tick", "schedule": "0 12 * * *" },
+    { "path": "/api/cron/tick", "schedule": "0 15 * * *" },
+    { "path": "/api/cron/tick", "schedule": "0 18 * * *" },
+    { "path": "/api/cron/tick", "schedule": "0 21 * * *" }
+  ],
+  "rewrites": [
+    { "source": "/((?!api/).*)", "destination": "/index.html" }
+  ]
+}
