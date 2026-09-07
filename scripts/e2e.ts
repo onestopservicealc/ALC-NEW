@@ -1,9 +1,11 @@
 /**
  * ทดสอบระบบในมุมผู้ใช้งาน — ขับ Chrome จริงผ่าน Playwright
  *
- * ตรวจสิ่งที่ทดสอบด้วย API ไม่ได้: การมองเห็นตามสิทธิ์ · โฟกัสช่องกรอกอัตโนมัติ ·
- * การส่งเมื่อวาง · การกดปุ่มยืนยันโดยไม่ต้องวาง (อ่านคลิปบอร์ดเอง) ·
- * การเลื่อนไปข่าวถัดไปเอง · ชื่อบุคคลไม่หลุดสู่หน้าสาธารณะ
+ * ตรวจสิ่งที่ทดสอบด้วย API ไม่ได้: การมองเห็นตามสิทธิ์ · การยืนยันลิงก์ด้วยปุ่มเดียว ·
+ * ทางถอยเมื่อถอดลิงก์ไม่สำเร็จ · การส่งเมื่อวาง · การเลื่อนไปข่าวถัดไปเอง ·
+ * ชื่อบุคคลไม่หลุดสู่หน้าสาธารณะ
+ *
+ * การถอดลิงก์ Google News จริงไม่ทดสอบที่นี่ เพราะขึ้นกับบริการภายนอก — ดู npm run check:gnews
  *
  * ใช้ข้อมูลทดสอบที่มีคำนำหน้า [E2E] แยกจากคิวงานจริง และล้างทิ้งเมื่อจบเสมอ
  *
@@ -140,27 +142,15 @@ async function main() {
     check(/ยืนยันลิงก์\s+\d+\s*\/\s*\d+/.test(focus), 'แสดงความคืบหน้าแบบ n / ทั้งหมด');
     check(await page.getByRole('link', { name: /เปิดข่าวต้นทาง/ }).isVisible(), 'มีปุ่มเปิดข่าวต้นทาง');
 
+    /* ---- ทางหลักคือกดยืนยันได้เลย จึงต้องไม่มีช่องกรอกอะไรให้เห็นตั้งแต่แรก ---- */
     const urlBox = page.locator('input[type="url"]');
-    check(await urlBox.isVisible(), 'มีช่องรับ URL');
+    const confirmLeadBtn = page.getByRole('button', { name: /^ยืนยันข่าวนี้$/ });
+    check(await confirmLeadBtn.isVisible(), 'มีปุ่มยืนยันข่าวนี้');
+    check(await confirmLeadBtn.isEnabled(), 'ปุ่มยืนยันกดได้ทันที ไม่ต้องกรอกอะไรก่อน');
     check(
-      await urlBox.evaluate((el) => el === document.activeElement),
-      'ช่องกรอกถูกโฟกัสอัตโนมัติ (วางได้เลยไม่ต้องคลิก)'
+      (await urlBox.count()) === 0,
+      'ไม่มีช่องกรอก URL ให้เห็น — เซิร์ฟเวอร์ถอดลิงก์ให้เอง'
     );
-
-    // เดิมช่องนี้ผูกกับ onPaste อย่างเดียว พิมพ์แล้วกด Enter ไม่เกิดอะไรขึ้นเลย
-    // ค่าที่ใส่ไม่ใช่ URL จึงตกด่านฝั่งเบราว์เซอร์ ไม่ยิง API ไม่แตะข้อมูลจริง
-    await urlBox.fill('ยังไม่ใช่ลิงก์');
-    check(
-      (await urlBox.inputValue()) === 'ยังไม่ใช่ลิงก์',
-      'ช่องกรอกรับการพิมพ์ ไม่ใช่รับเฉพาะการวาง'
-    );
-    await urlBox.press('Enter');
-    await page.waitForTimeout(600);
-    check(
-      (await bodyText(page)).includes('ยังไม่ใช่ URL'),
-      'กด Enter ด้วยข้อความที่ไม่ใช่ลิงก์แล้วเตือน ไม่ยิง API'
-    );
-    await urlBox.fill('');
 
     const firstTitle = await page.locator('h3').first().innerText();
     check(
@@ -168,36 +158,6 @@ async function main() {
       'มีปุ่มไม่เกี่ยวข้อง'
     );
     check(await page.getByRole('button', { name: /^ข้าม$/ }).isVisible(), 'มีปุ่มข้าม');
-
-    const confirmBtn = page.getByRole('button', { name: /^ยืนยันลิงก์นี้$/ });
-    check(await confirmBtn.isVisible(), 'มีปุ่มยืนยันลิงก์ข้างช่องกรอก');
-
-    /* ---- หัวใจของปุ่มนี้: ผู้ใช้ไม่ต้องวาง ปุ่มไปหยิบจากคลิปบอร์ดเอง ----
-     *
-     * ใช้ลิงก์ Google News เป็นตัวทดสอบ เพราะระบบต้องปฏิเสธตั้งแต่ฝั่งเบราว์เซอร์
-     * จึงพิสูจน์ได้ทั้งว่าอ่านคลิปบอร์ดสำเร็จและว่าด่านทำงาน โดยไม่แตะข้อมูลจริงเลย
-     */
-    const clipboardOk = await page
-      .evaluate(() => navigator.clipboard.writeText('https://news.google.com/rss/articles/E2ECLIP'))
-      .then(() => true)
-      .catch(() => false);
-
-    if (!clipboardOk) {
-      console.log('  – ข้ามการทดสอบอ่านคลิปบอร์ด (เบราว์เซอร์ไม่ให้เขียนคลิปบอร์ดในโหมดนี้)');
-    } else {
-      await urlBox.fill('');
-      await confirmBtn.click();
-      await page.waitForTimeout(900);
-      check(
-        (await urlBox.inputValue()).includes('news.google.com'),
-        'กดยืนยันโดยไม่ต้องวาง — ปุ่มหยิบลิงก์จากคลิปบอร์ดมาให้เอง'
-      );
-      check(
-        /Google News/.test(await bodyText(page)),
-        'ลิงก์ Google News ถูกปฏิเสธตั้งแต่ฝั่งเบราว์เซอร์ ไม่เสียรอบเรียก API'
-      );
-      await urlBox.fill('');
-    }
 
     // ข้าม → ต้องเปลี่ยนข่าวแต่ไม่หายจากคิว (ไม่แตะข้อมูล ปลอดภัยเสมอ)
     await page.getByRole('button', { name: /^ข้าม$/ }).click();
@@ -240,13 +200,17 @@ async function main() {
       );
     }
 
-    /* ---- วาง URL แล้วต้องไปข่าวถัดไปทันที ไม่ยืนรอ AI ----
+    /* ---- กดยืนยันแล้วต้องไปข่าวถัดไปทันที ไม่ยืนรอ AI ----
      *
      * นี่คือหัวใจของการลดเวลาคิวจาก 30 นาทีเหลือไม่กี่นาที
      * เดิมโค้ดทำ await การสกัดของ AI ทั้งก้อน (5-15 วินาที) ก่อนจะไปข่าวถัดไปได้
      * เทสต์นี้จึงวัด "เวลาจนกว่าจะรับข่าวถัดไปได้" ไม่ใช่แค่ว่ากดได้หรือไม่
+     *
+     * lead ทดสอบใช้ gnews_link ปลอม เซิร์ฟเวอร์จึงถอดไม่สำเร็จแน่นอน —
+     * ได้ทดสอบ "ทางถอย" (เปิดช่องให้วาง URL เอง) ฟรีโดยไม่ต้องพึ่ง Google
+     * ส่วนการถอดจริงทดสอบแยกที่ `npm run check:gnews` เพราะขึ้นกับบริการภายนอก
      */
-    // ต้องอยู่ที่ lead ทดสอบก่อนวาง URL — ไม่งั้นจะไปเขียนทับ URL ของข่าวจริง
+    // ต้องอยู่ที่ lead ทดสอบก่อนยืนยัน — ไม่งั้นจะไปเขียนทับ URL ของข่าวจริง
     // รายการทดสอบอาจอยู่ "ข้างหลัง" ตำแหน่งปัจจุบันแล้ว จึงต้องโหลดคิวใหม่ให้กลับไปเริ่มที่ต้นแถว
     if (!(await onTestLead())) {
       await page.getByRole('button', { name: /คิวตรวจสอบข่าว/ }).first().click();
@@ -258,18 +222,36 @@ async function main() {
         await page.waitForTimeout(400);
       }
     }
-    const titleBeforePaste = await page.locator('h3').first().innerText();
-    const countBeforePaste = Number(
+    const titleBeforeConfirm = await page.locator('h3').first().innerText();
+    const countBeforeConfirm = Number(
       (await bodyText(page)).match(/ยืนยันลิงก์\s+\d+\s*\/\s*(\d+)/)?.[1] ?? 0
     );
 
     // ไม่เจอ lead ทดสอบ = ข้ามเทสต์นี้ไปเลย ยอมไม่ได้ที่จะเขียนทับ URL ของข่าวจริง
-    if (!titleBeforePaste.includes('[E2E]')) {
-      console.log('  – ข้ามการทดสอบวาง URL (หา lead ทดสอบในคิวไม่เจอ) — ไม่เขียนทับข่าวจริง');
+    if (!titleBeforeConfirm.includes('[E2E]')) {
+      console.log('  – ข้ามการทดสอบยืนยันลิงก์ (หา lead ทดสอบในคิวไม่เจอ) — ไม่เขียนทับข่าวจริง');
     } else {
+      /* ---- 1. ถอดอัตโนมัติไม่สำเร็จ ต้องเปิดทางถอยให้ ห้ามตัน ---- */
+      await page.getByRole('button', { name: /^ยืนยันข่าวนี้$/ }).click();
+      await page.waitForTimeout(4000);
+
+      check(
+        await urlBox.isVisible().catch(() => false),
+        'ถอดลิงก์ไม่สำเร็จแล้วเปิดช่องให้วาง URL เอง ไม่ปล่อยให้ตัน'
+      );
+      check(
+        /ถอดลิงก์อัตโนมัติ.*ไม่สำเร็จ/.test(await bodyText(page)),
+        'บอกเหตุผลว่าทำไมต้องวาง URL เอง'
+      );
+      check(
+        (await page.locator('h3').first().innerText()) === titleBeforeConfirm,
+        'ถอดไม่สำเร็จแล้วยังอยู่ที่ข่าวเดิม ไม่ข้ามทิ้ง'
+      );
+
+      /* ---- 2. วาง URL ในทางถอย แล้วต้องไปข่าวถัดไปทันที ---- */
       const pasteStarted = Date.now();
-      await page.locator('input[type="url"]').evaluate((el) => (el as HTMLElement).focus());
-      // จำลองการวางจากคลิปบอร์ดจริง — โค้ดผูกกับ onPaste ไม่ใช่ onChange
+      await urlBox.evaluate((el) => (el as HTMLElement).focus());
+      // จำลองการวางจากคลิปบอร์ดจริง — ทางถอยยังส่งทันทีเมื่อวาง ไม่ต้องกดปุ่ม
       await page.evaluate(() => {
         const input = document.querySelector('input[type="url"]') as HTMLInputElement;
         const dt = new DataTransfer();
@@ -286,7 +268,7 @@ async function main() {
             const h = document.querySelector('h3');
             return !h || h.textContent?.trim() !== prev;
           },
-          titleBeforePaste,
+          titleBeforeConfirm,
           { timeout: 6000 }
         )
         .catch(() => undefined);
@@ -298,13 +280,13 @@ async function main() {
         `${(advancedMs / 1000).toFixed(1)} วินาที (เดิมต้องรอ 5-15 วินาที)`
       );
 
-      const countAfterPaste = Number(
+      const countAfterConfirm = Number(
         (await bodyText(page)).match(/ยืนยันลิงก์\s+\d+\s*\/\s*(\d+)/)?.[1] ?? 0
       );
       check(
-        countAfterPaste === countBeforePaste - 1 || countAfterPaste === 0,
-        'รายการที่วางลิงก์แล้วออกจากคิว',
-        `${countBeforePaste} → ${countAfterPaste}`
+        countAfterConfirm === countBeforeConfirm - 1 || countAfterConfirm === 0,
+        'รายการที่ยืนยันลิงก์แล้วออกจากคิว',
+        `${countBeforeConfirm} → ${countAfterConfirm}`
       );
 
       // ต้องมีที่แสดงผลงานเบื้องหลัง ไม่งั้นผู้ใช้ไม่มีทางรู้ว่าข่าวไหนสำเร็จ/ล้มเหลว

@@ -158,7 +158,10 @@ export async function fetchFeed(url: string, timeoutMs = 15000): Promise<FeedRes
   }
 }
 
-/** true เมื่อลิงก์เป็น redirect ของ Google News ซึ่งถอดกลับเป็น URL ต้นทางไม่ได้ */
+/**
+ * true เมื่อลิงก์เป็น redirect ของ Google News ซึ่งเอาไปดึงเนื้อข่าวตรงๆ ไม่ได้
+ * ถอดกลับเป็น URL ต้นทางได้ด้วย `resolveGoogleNewsUrl` ใน `_lib/gnews.ts` (แต่ไม่การันตี)
+ */
 export function isGoogleNewsLink(link: string | null): boolean {
   if (!link) return false;
   return /^https?:\/\/news\.google\.com\/(rss\/)?articles\//i.test(link);

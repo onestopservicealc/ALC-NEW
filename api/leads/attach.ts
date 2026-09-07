@@ -10,9 +10,14 @@
  * การสกัดปล่อยให้ stage C ของ pipeline ทำต่อ (แถวเข้าเงื่อนไข keyword_pass + attempts<3 แล้ว)
  *
  * ผลพลอยได้ที่สำคัญ: งานไม่หายแม้ผู้ใช้ปิดแท็บทันทีหลังวาง เพราะสถานะอยู่ในฐานข้อมูลแล้ว
+ *
+ * `url` เป็นตัวเลือก — ถ้าไม่ส่งมา เซิร์ฟเวอร์จะถอดลิงก์ Google News ของ lead เอง
+ * (ดู `_lib/gnews.ts`) เจ้าหน้าที่จึงกดยืนยันได้เลยโดยไม่ต้องเปิดข่าวไปคัดลอก URL
+ * การถอดพังได้เพราะพึ่ง endpoint ภายในของ Google จึงคืน needsManualUrl ให้หน้าจอถอยไปทางวางเอง
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { requireUser } from '../_lib/auth';
+import { resolveGoogleNewsUrl } from '../_lib/gnews';
 import { canonicalizeUrl } from '../_lib/http';
 import { linkArticleToUrl } from '../_lib/leads';
 import { fail, methodNotAllowed } from '../_lib/respond';
@@ -26,9 +31,45 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     await requireUser(req, 'editor');
 
-    const { url, articleId } = (req.body ?? {}) as Record<string, string>;
+    const { url: givenUrl, articleId } = (req.body ?? {}) as Record<string, string>;
 
-    if (!url || !/^https?:\/\//i.test(url)) {
+    if (!articleId) {
+      return res.status(400).json({ error: 'ไม่ได้ระบุรายการที่จะแนบ URL' });
+    }
+
+    const db = supabaseAdmin();
+    let url = (givenUrl ?? '').trim();
+    /** true เมื่อ URL มาจากการถอดอัตโนมัติ ไม่ใช่เจ้าหน้าที่วางมา */
+    let autoResolved = false;
+
+    /* ---- ไม่ได้ส่ง URL มา = ให้เซิร์ฟเวอร์ถอดจากลิงก์ Google News ของ lead เอง ---- */
+    if (!url) {
+      const { data: lead } = await db
+        .from('articles')
+        .select('gnews_link')
+        .eq('id', articleId)
+        .maybeSingle();
+
+      if (!lead?.gnews_link) {
+        return res.status(422).json({
+          error: 'รายการนี้ไม่มีลิงก์ Google News ให้ถอด — กรุณาเปิดข่าวแล้ววาง URL เอง',
+          needsManualUrl: true,
+        });
+      }
+
+      const resolved = await resolveGoogleNewsUrl(lead.gnews_link);
+      if (!resolved.url) {
+        // ถอดอัตโนมัติพังได้เสมอเพราะพึ่ง endpoint ภายในของ Google — ต้องมีทางถอยให้คนทำต่อ
+        return res.status(422).json({
+          error: `ถอดลิงก์อัตโนมัติไม่สำเร็จ (${resolved.error}) — กรุณาเปิดข่าวแล้ววาง URL เอง`,
+          needsManualUrl: true,
+        });
+      }
+      url = resolved.url;
+      autoResolved = true;
+    }
+
+    if (!/^https?:\/\//i.test(url)) {
       return res.status(400).json({ error: 'กรุณาระบุ URL ข่าวที่ขึ้นต้นด้วย http:// หรือ https://' });
     }
     if (/^https?:\/\/news\.google\.com\//i.test(url)) {
@@ -37,11 +78,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           'ลิงก์ Google News ใช้ดึงเนื้อข่าวไม่ได้ (Google เข้ารหัสลิงก์ไว้) — กรุณาเปิดลิงก์แล้วคัดลอก URL ของสำนักข่าวต้นทางมาแทน',
       });
     }
-    if (!articleId) {
-      return res.status(400).json({ error: 'ไม่ได้ระบุรายการที่จะแนบ URL' });
-    }
 
-    const db = supabaseAdmin();
     const canonical = canonicalizeUrl(url);
 
     /* ---- มีเคสของ URL นี้อยู่แล้วหรือไม่ — ปิด lead ไปเลย ไม่ต้องเปลืองโควตา AI ---- */
@@ -67,6 +104,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         success: true,
         duplicate: true,
         existing,
+        url,
+        autoResolved,
         message: `URL นี้มีอยู่ในระบบแล้วเป็นเคส #${existing.seq} (สถานะ ${existing.status}) จึงไม่บันทึกซ้ำ`,
       });
     }
@@ -85,6 +124,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       success: true,
       duplicate: false,
       articleId: queuedId,
+      // URL ที่บันทึกจริง — หน้าจอต้องใช้ต่อเพื่อสั่งสกัด และเพื่อให้เจ้าหน้าที่เห็นว่าถอดได้อะไรมา
+      url,
+      autoResolved,
       // แถวถูกเปลี่ยนตัวเพราะชน url_key กับข่าวที่มาทางฟีดตรง
       mergedInto: queuedId !== articleId ? queuedId : null,
       message: 'บันทึกลิงก์แล้ว กำลังสกัดข้อมูล',

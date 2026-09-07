@@ -566,6 +566,16 @@ const useElapsed = (active: boolean): number => {
   return seconds;
 };
 
+interface AttachResponse {
+  duplicate?: boolean;
+  articleId?: string;
+  message?: string;
+  /** URL ที่บันทึกจริง — ทางถอดอัตโนมัติมีแต่เซิร์ฟเวอร์ที่รู้ค่านี้ */
+  url?: string;
+  /** true เมื่อเซิร์ฟเวอร์ถอดลิงก์ Google News ให้เอง ไม่ใช่เจ้าหน้าที่วางมา */
+  autoResolved?: boolean;
+}
+
 interface ExtractUrlResponse {
   data: unknown;
   message?: string;
@@ -731,18 +741,16 @@ const EXTRACT_CONCURRENCY = 2;
 /**
  * ยืนยันลิงก์แบบทีละข่าว
  *
- * Google News ให้พาดหัวและชื่อสำนักข่าว แต่เข้ารหัสลิงก์ไว้ จึงไม่มีทางรู้ URL ต้นทาง
- * โดยอัตโนมัติ (ทดสอบแล้วทั้งการถอดลิงก์ การหา RSS ของสำนักนั้น และการค้นในเว็บสำนัก — ไม่ได้ทั้งหมด)
- * งานนี้จึงต้องใช้คนเสมอ หน้าจอนี้ทำให้เหลือ 3 ขั้น: กดเปิดข่าว → คัดลอก URL → ยืนยัน
+ * Google News ให้พาดหัวและชื่อสำนักข่าว แต่เข้ารหัสลิงก์ไว้ เดิมจึงต้องให้เจ้าหน้าที่
+ * เปิดข่าว คัดลอก URL แล้วกลับมาวางทีละข่าว — คิว 73 รายการกินเวลาครึ่งชั่วโมง
  *
- * ยืนยันได้ 3 ทาง ทุกทางไปจบที่ submitUrl เหมือนกัน:
- *   1. วางในช่อง (Cmd+V) — ส่งทันทีโดยไม่ต้องกดปุ่ม เร็วที่สุดและช่องโฟกัสรออยู่แล้ว
- *   2. กดปุ่ม "ยืนยันลิงก์นี้" — ไม่ต้องวางเลย ปุ่มไปหยิบลิงก์จากคลิปบอร์ดมาให้เอง
- *   3. พิมพ์เองแล้วกด Enter
+ * ตอนนี้เซิร์ฟเวอร์ถอดลิงก์เองได้แล้ว (`api/_lib/gnews.ts`) งานจึงเหลือขั้นเดียว:
+ * **กดปุ่ม "ยืนยันข่าวนี้"** ไม่ต้องกรอกอะไร ไม่ต้องเปิดข่าวด้วยซ้ำ
  *
- * ทาง 2 มีเพราะทาง 1 พังเงียบได้หลายแบบ: สลับแท็บกลับมาแล้วโฟกัสหลุด วางด้วยเมาส์ไม่ได้
- * หรือผู้ใช้มองไม่เห็นว่าต้องทำอะไรเพราะไม่มีปุ่มให้กด
- * เสร็จแล้วเลื่อนไปข่าวถัดไปเอง
+ * ทางถอยยังต้องมี เพราะการถอดพึ่ง endpoint ภายในของ Google ที่พังได้ทุกเมื่อ —
+ * ถ้าถอดไม่สำเร็จ ช่องกรอก URL จะโผล่มาพร้อมเหตุผล และรับค่าได้ 3 ทาง
+ * (วางแล้วส่งทันที · กดปุ่มให้หยิบจากคลิปบอร์ด · พิมพ์แล้วกด Enter)
+ * ทุกทางไปจบที่ submitUrl เหมือนกัน เสร็จแล้วเลื่อนไปข่าวถัดไปเอง
  */
 const NeedsUrlPanel: React.FC<{
   canEdit: boolean;
@@ -767,6 +775,11 @@ const NeedsUrlPanel: React.FC<{
   const [textValue, setTextValue] = useState('');
   /** กำลังขออ่านคลิปบอร์ด — แยกจาก busy เพราะยังไม่ได้ยิง API และต้องไม่ปิดช่องกรอก */
   const [reading, setReading] = useState(false);
+  /**
+   * ตั้งเมื่อเซิร์ฟเวอร์ถอดลิงก์ Google News ของข่าวนี้ไม่สำเร็จ
+   * ปกติเจ้าหน้าที่ไม่ต้องเห็นช่องกรอก URL เลย — จะโผล่มาเฉพาะตอนที่ต้องใช้คนช่วยจริงๆ
+   */
+  const [manualUrl, setManualUrl] = useState(false);
   /**
    * นับวินาทีเฉพาะทางเนื้อข่าว ซึ่งเป็นทางเดียวที่ยังต้องยืนรอ AI (5-15 วินาที)
    * ทาง URL ไม่ต้องรอเพราะสกัดเบื้องหลัง
@@ -827,6 +840,8 @@ const NeedsUrlPanel: React.FC<{
     // และข่าวสุดท้าย (current?.id เปลี่ยนจาก string เป็น undefined effect ก็ยังทำงาน)
     setUrlValue('');
     setTextValue('');
+    // ข่าวใหม่ต้องได้ลองถอดอัตโนมัติเสมอ ไม่ใช่ติดโหมดวางเองมาจากข่าวก่อนหน้า
+    setManualUrl(false);
   }, [current?.id]);
 
   // โฟกัสช่องที่ต้องใช้ทันทีที่เปลี่ยนข่าว ผู้ใช้จึงกด Cmd+V ได้เลยหลังสลับแท็บกลับมา
@@ -836,8 +851,8 @@ const NeedsUrlPanel: React.FC<{
   useEffect(() => {
     if (busy || !current) return;
     if (blockedUrl) textInput.current?.focus();
-    else urlInput.current?.focus();
-  }, [current?.id, busy, blockedUrl]);
+    else if (manualUrl) urlInput.current?.focus();
+  }, [current?.id, busy, blockedUrl, manualUrl]);
 
   const updateJob = (articleId: string, patch: Partial<BackgroundJob>) => {
     if (!aliveRef.current) return;
@@ -916,42 +931,45 @@ const NeedsUrlPanel: React.FC<{
   };
 
   /**
-   * วาง URL → บันทึกลิงก์แล้วไปข่าวถัดไปทันที
+   * ยืนยัน lead ปัจจุบัน แล้วไปข่าวถัดไปทันที
    *
-   * เดิมขั้นนี้ await การสกัดของ AI ทั้งก้อน (5-15 วินาที) ผู้ใช้จึงต้องนั่งรอทีละข่าว
-   * ตอนนี้รอแค่การเขียนฐานข้อมูล (~200 ms) ที่เหลือทำเบื้องหลัง
+   * `value` = null คือทางหลัก — กดปุ่มเดียวจบ เซิร์ฟเวอร์ถอดลิงก์ Google News ให้เอง
+   * `value` = string คือทางถอย ใช้เมื่อถอดอัตโนมัติไม่สำเร็จแล้วเจ้าหน้าที่หา URL มาเอง
+   *
+   * ไม่ว่าทางไหนก็รอแค่การเขียนฐานข้อมูล (~200 ms บวกเวลาถอดลิงก์อีกราว 300 ms)
+   * การสกัดของ AI (5-15 วินาที) ทำเบื้องหลัง ผู้ใช้ไม่ต้องยืนรอ
    */
-  const submitUrl = async (value: string) => {
+  const submitUrl = async (value: string | null) => {
     if (!current || busy) return;
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    // ด่านตรวจอยู่ตรงนี้ที่เดียว ทั้งการวาง การกด Enter และการกดปุ่มยืนยันจึงเจอเกณฑ์เดียวกัน
-    if (!/^https?:\/\//i.test(trimmed)) {
-      // เลี่ยงคำว่า "ที่วางมา" เพราะตอนนี้ค่ามาได้ทั้งจากการพิมพ์ การวาง และคลิปบอร์ด
-      onToast('ยังไม่ใช่ URL — ต้องขึ้นต้นด้วย http:// หรือ https://', 'info');
-      urlInput.current?.focus();
-      return;
-    }
-    // ดักตั้งแต่ฝั่งเบราว์เซอร์ — /api/leads/attach ปฏิเสธลิงก์นี้อยู่แล้ว ไม่ต้องเสียรอบเดินทาง
-    // และเป็นเคสที่เกิดง่ายมาก เพราะผู้ใช้เพิ่งกดเปิดลิงก์ Google News มาหมาดๆ
-    if (/^https?:\/\/news\.google\.com\//i.test(trimmed)) {
-      onToast(
-        'นี่คือลิงก์ Google News ซึ่ง Google เข้ารหัสไว้ ใช้ดึงเนื้อข่าวไม่ได้ — กดเปิดข่าวต้นทางแล้วคัดลอก URL ของสำนักข่าวมาแทน',
-        'info'
-      );
-      urlInput.current?.focus();
-      return;
+
+    const trimmed = value?.trim() ?? null;
+    if (trimmed !== null) {
+      if (!trimmed) return;
+      // ด่านตรวจอยู่ตรงนี้ที่เดียว ทั้งการวาง การกด Enter และการกดปุ่มยืนยันจึงเจอเกณฑ์เดียวกัน
+      if (!/^https?:\/\//i.test(trimmed)) {
+        // เลี่ยงคำว่า "ที่วางมา" เพราะตอนนี้ค่ามาได้ทั้งจากการพิมพ์ การวาง และคลิปบอร์ด
+        onToast('ยังไม่ใช่ URL — ต้องขึ้นต้นด้วย http:// หรือ https://', 'info');
+        urlInput.current?.focus();
+        return;
+      }
+      // ดักตั้งแต่ฝั่งเบราว์เซอร์ — /api/leads/attach ปฏิเสธลิงก์นี้อยู่แล้ว ไม่ต้องเสียรอบเดินทาง
+      // และเป็นเคสที่เกิดง่ายมาก เพราะผู้ใช้เพิ่งกดเปิดลิงก์ Google News มาหมาดๆ
+      if (/^https?:\/\/news\.google\.com\//i.test(trimmed)) {
+        onToast(
+          'นี่คือลิงก์ Google News ซึ่ง Google เข้ารหัสไว้ ใช้ดึงเนื้อข่าวไม่ได้ — กดเปิดข่าวต้นทางแล้วคัดลอก URL ของสำนักข่าวมาแทน',
+          'info'
+        );
+        urlInput.current?.focus();
+        return;
+      }
     }
 
     const lead = current;
     setBusy(true);
     try {
-      const attached = await callApi<{
-        duplicate?: boolean;
-        articleId?: string;
-        message?: string;
-      }>('/api/leads/attach', {
-        url: trimmed,
+      const attached = await callApi<AttachResponse>('/api/leads/attach', {
+        // ไม่ส่ง url ไปเลยเมื่อให้เซิร์ฟเวอร์ถอดเอง
+        ...(trimmed !== null ? { url: trimmed } : {}),
         articleId: lead.id,
       });
 
@@ -966,7 +984,8 @@ const NeedsUrlPanel: React.FC<{
       const job: BackgroundJob = {
         articleId: attached.articleId ?? lead.id,
         title: lead.title,
-        url: trimmed,
+        // เชื่อ URL ที่เซิร์ฟเวอร์ตอบกลับก่อน เพราะทางถอดอัตโนมัติมีแต่ฝั่งนั้นที่รู้
+        url: attached.url ?? trimmed ?? '',
         newsAgency: lead.news_agency,
         state: 'running',
         message: 'กำลังสกัด',
@@ -976,6 +995,12 @@ const NeedsUrlPanel: React.FC<{
       queueRef.current.push(job);
       pump();
     } catch (err: any) {
+      // เซิร์ฟเวอร์ถอดลิงก์ไม่ได้ — เปิดช่องให้เจ้าหน้าที่วาง URL เอง ห้ามปล่อยให้ตัน
+      if (err?.payload?.needsManualUrl) {
+        setManualUrl(true);
+        onToast(String(err?.message ?? 'ถอดลิงก์อัตโนมัติไม่สำเร็จ'), 'info');
+        return;
+      }
       onToast(String(err?.message ?? 'บันทึกลิงก์ไม่สำเร็จ'), 'info');
     } finally {
       setBusy(false);
@@ -1064,7 +1089,21 @@ const NeedsUrlPanel: React.FC<{
   };
 
   /**
-   * ปุ่มยืนยันลิงก์ — ใช้ค่าที่พิมพ์หรือวางไว้ ถ้าช่องว่างจะไปหยิบจากคลิปบอร์ดให้เอง
+   * ปุ่มหลัก — ยืนยันข่าวนี้โดยไม่ต้องกรอกอะไรเลย
+   * เซิร์ฟเวอร์ถอดลิงก์ Google News เป็น URL ต้นทางให้เอง (ดู api/_lib/gnews.ts)
+   */
+  const confirmLead = async () => {
+    if (confirmLock.current || busy || !current) return;
+    confirmLock.current = true;
+    try {
+      await submitUrl(null);
+    } finally {
+      confirmLock.current = false;
+    }
+  };
+
+  /**
+   * ปุ่มยืนยันในโหมดวางเอง — ใช้ค่าที่พิมพ์หรือวางไว้ ถ้าช่องว่างจะไปหยิบจากคลิปบอร์ดให้เอง
    *
    * ห้ามปิดปุ่มตอนช่องว่าง — ช่องว่างคือกรณีที่ปุ่มนี้มีไว้ทำงานโดยเฉพาะ
    */
@@ -1204,17 +1243,46 @@ const NeedsUrlPanel: React.FC<{
             </div>
           </div>
 
-          {/* ปุ่มเปิดข่าว */}
-          {current.gnews_link && (
-            <a
-              href={current.gnews_link}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-5 py-3 bg-neutral-900 hover:bg-black text-white text-xs font-mono font-bold  rounded-sm transition-all"
-            >
-              เปิดข่าวต้นทาง
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
+          {/* การกระทำหลัก — ยืนยันได้เลย ไม่ต้องกรอกอะไร */}
+          <div className="flex flex-wrap items-center gap-2">
+            {!blockedUrl && !manualUrl && (
+              <button
+                onClick={() => void confirmLead()}
+                disabled={!canEdit || busy}
+                className="px-6 py-3 rounded-sm bg-neutral-900 hover:bg-black disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-mono font-bold transition-all shadow-md flex items-center gap-2"
+              >
+                {busy ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                )}
+                <span>ยืนยันข่าวนี้</span>
+              </button>
+            )}
+            {current.gnews_link && (
+              <a
+                href={current.gnews_link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 px-5 py-3 border border-neutral-300 hover:border-neutral-400 hover:bg-neutral-100 text-neutral-800 text-xs font-mono rounded-sm transition-all"
+              >
+                เปิดข่าวต้นทาง
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            )}
+          </div>
+
+          {/* คำอธิบายทางหลัก — ไม่ต้องมีช่องกรอกใดๆ ให้เห็น */}
+          {!blockedUrl && !manualUrl && (
+            <div className="space-y-2">
+              <p className="text-[13px] text-neutral-600 font-sans">
+                กดยืนยันได้เลย ไม่ต้องเปิดข่าวไปคัดลอกลิงก์ — ระบบถอดลิงก์ Google News
+                เป็น URL ของสำนักข่าวต้นทางให้เอง แล้วไปข่าวถัดไปทันที ไม่ต้องรอ AI
+              </p>
+              <p className="text-[13px] text-neutral-600 font-sans">
+                ถ้าถอดไม่สำเร็จ ระบบจะเปิดช่องให้วาง URL เองเป็นทางถอย
+              </p>
+            </div>
           )}
 
           {/* ช่องรับ URL หรือเนื้อข่าว */}
@@ -1273,8 +1341,11 @@ const NeedsUrlPanel: React.FC<{
                 </button>
               </div>
             </div>
-          ) : (
+          ) : manualUrl ? (
             <div className="space-y-2">
+              <p className="text-[13px] font-sans text-red-700">
+                ถอดลิงก์อัตโนมัติของข่าวนี้ไม่สำเร็จ — กดเปิดข่าวต้นทางแล้วเอา URL ของสำนักข่าวมาให้ระบบ
+              </p>
               <div className="flex flex-wrap items-center gap-2">
                 <input
                   ref={urlInput}
@@ -1333,8 +1404,14 @@ const NeedsUrlPanel: React.FC<{
                 </a>{' '}
                 ไว้บนแถบบุ๊กมาร์ก แล้วกดครั้งเดียวจากหน้าข่าวได้เลย ไม่ต้องคัดลอก-สลับแท็บ-วาง
               </p>
+              <button
+                onClick={() => setManualUrl(false)}
+                className="text-[13px] font-mono text-neutral-600 hover:text-neutral-700"
+              >
+                ← ลองถอดลิงก์อัตโนมัติอีกครั้ง
+              </button>
             </div>
-          )}
+          ) : null}
         </div>
       </div>
 
