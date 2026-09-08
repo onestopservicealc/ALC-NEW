@@ -7,6 +7,7 @@
     "dev": "vite",
     "dev:api": "vercel dev",
     "build": "vite build",
+    "build:map": "tsx scripts/build-thailand-map.ts",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
     "check:feeds": "tsx scripts/check-feeds.ts",

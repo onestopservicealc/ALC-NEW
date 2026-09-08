@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, lazy, Suspense } from 'react';
 import { CrimeIncident } from '../types/dataDictionary';
-import { deriveAlcoholInvolved } from '../lib/normalize';
+import { deriveAlcoholInvolved, normalizeProvince } from '../lib/normalize';
 import { 
   Users, 
   Flame, 
@@ -50,6 +50,17 @@ interface AnalyticsDashboardProps {
   updatedAt?: Date | null;
 }
 
+/**
+ * แผนที่โหลดแยกก้อน เพราะข้อมูลรูปร่าง 77 จังหวัดหนัก ~73 KB
+ * ไม่ควรถ่วงการโหลดครั้งแรกของทุกคน รวมถึงผู้เข้าชมหน้าสาธารณะที่อาจไม่เลื่อนลงมาถึง
+ */
+const ThailandMap = lazy(() =>
+  import('./ThailandMap').then((m) => ({ default: m.ThailandMap }))
+);
+const ThailandMapLegend = lazy(() =>
+  import('./ThailandMap').then((m) => ({ default: m.ThailandMapLegend }))
+);
+
 /** เกณฑ์ตามกฎหมายไทย: ผู้ขับขี่ทั่วไปห้ามเกิน 50 มก.% */
 const LEGAL_BAC_LIMIT = 50;
 
@@ -70,6 +81,10 @@ const AGE_BUCKETS = [
 /**
  * สีกราฟ — ไล่เฉดเทาถึงดำ และใช้แดงเป็นตัวเน้นค่าที่ต้องสนใจเท่านั้น
  * ไล่จากเข้มไปอ่อนเพื่อให้อ่านลำดับได้แม้พิมพ์ขาวดำหรือผู้ใช้ตาบอดสี
+ *
+ * ข้อยกเว้นคือแผนที่รายจังหวัด (ThailandMap.tsx) ที่ไล่เฉดแดงโทนเดียว
+ * ซึ่งยังคงเจตนาเดิมไว้ เพราะการไล่ความเข้มในโทนเดียวอ่านลำดับได้เหมือนกัน
+ * ต่างจาก heat map หลายสีที่บอกลำดับไม่ได้
  */
 const COLORS = ['#18181b', '#52525b', '#71717a', '#a1a1aa', '#c4c4c8', '#d92d20', '#e4e4e7', '#f0f0f1'];
 /** คำอธิบายกราฟ — บังคับสีเข้มไม่ให้ไปใช้สีของแท่งกราฟที่อ่อนเกินไป */
@@ -134,6 +149,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 }) => {
   const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>('ALL');
   const [selectedProvinceFilter, setSelectedProvinceFilter] = useState<string>('ALL');
+  /** แผนที่ระบายได้ทีละค่า จึงมีปุ่มสลับเพื่อไม่ให้เสียข้อมูลที่กราฟแท่งเดิมแสดงพร้อมกันได้ */
+  const [mapMetric, setMapMetric] = useState<'count' | 'deaths'>('count');
 
   // Filtered dataset
   const filteredIncidents = useMemo(() => {
@@ -267,21 +284,46 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     return Object.entries(hours).map(([hour, v]) => ({ hour, ...v }));
   }, [filteredIncidents]);
 
-  // Chart 5: Province Hotspots
-  const provinceData = useMemo(() => {
-    const map: Record<string, { count: number; deaths: number }> = {};
-    filteredIncidents.forEach((inc) => {
-      const prov = inc.province || 'ไม่ระบุ';
-      if (!map[prov]) map[prov] = { count: 0, deaths: 0 };
-      map[prov].count++;
-      map[prov].deaths += inc.total_death || 0;
+  /**
+   * ข้อมูลรายจังหวัดสำหรับแผนที่
+   *
+   * ตั้งใจ **ไม่กรองด้วย selectedProvinceFilter** ต่างจากกราฟอื่นในหน้านี้
+   * เพราะถ้ากรอง แผนที่จะเหลือจังหวัดเดียวและอีก 76 จังหวัดเป็นศูนย์ ซึ่งไร้ประโยชน์
+   * จังหวัดที่เลือกจะถูกเน้นด้วยเส้นขอบแทน แผนที่จึงเป็นตัวควบคุมตัวกรอง ไม่ใช่ถูกควบคุม
+   *
+   * ใช้ normalizeProvince ก่อนนับทุกครั้ง เพราะเส้นทางนำเข้า CSV ไม่ผ่านการ normalize
+   * จึงมีสตริงที่ไม่ตรงกับรายชื่อ 77 จังหวัดหลุดเข้าฐานข้อมูลได้
+   */
+  const provinceMetrics = useMemo(() => {
+    const byProvince: Record<string, { count: number; deaths: number }> = {};
+    let unknown = 0;
+
+    incidents.forEach((inc) => {
+      if (selectedTypeFilter !== 'ALL' && inc.news_type !== selectedTypeFilter) return;
+      const name = normalizeProvince(inc.province);
+      if (!name) {
+        unknown++;
+        return;
+      }
+      if (!byProvince[name]) byProvince[name] = { count: 0, deaths: 0 };
+      byProvince[name].count++;
+      byProvince[name].deaths += inc.total_death || 0;
     });
 
-    return Object.entries(map)
-      .map(([name, val]) => ({ name, เหตุการณ์: val.count, เสียชีวิต: val.deaths }))
-      .sort((a, b) => b.เหตุการณ์ - a.เหตุการณ์)
-      .slice(0, 8);
-  }, [filteredIncidents]);
+    const counts: Record<string, number> = {};
+    const deaths: Record<string, number> = {};
+    for (const [name, v] of Object.entries(byProvince)) {
+      counts[name] = v.count;
+      deaths[name] = v.deaths;
+    }
+
+    const top = Object.entries(byProvince)
+      .map(([name, v]) => ({ name, count: v.count, deaths: v.deaths }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    return { counts, deaths, unknown, top, provinceCount: Object.keys(byProvince).length };
+  }, [incidents, selectedTypeFilter]);
 
   // Chart 6: Beverage Types
   const beverageData = useMemo(() => {
@@ -791,28 +833,101 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           </div>
         </div>
 
-        {/* Top Provinces with Incidents */}
-        <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
-          <div className="flex items-center justify-between mb-4">
+        {/* แผนที่ความหนาแน่นรายจังหวัด — กินเต็มแถวเพราะแผนที่ไทยเป็นแนวตั้ง
+            ถ้าอยู่ในคอลัมน์ครึ่งเดียวจะได้แผนที่แคบจนดูไม่รู้เรื่อง */}
+        <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md lg:col-span-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <h3 className="text-sm font-semibold text-neutral-800 flex items-center gap-1.5">
               <MapPin className="w-3.5 h-3.5 text-neutral-600" />
-              Province Hotspots
+              ความหนาแน่นเหตุการณ์รายจังหวัด
             </h3>
+            <div className="flex items-center gap-1">
+              {([
+                ['count', 'จำนวนเหตุการณ์'],
+                ['deaths', 'ผู้เสียชีวิต'],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setMapMetric(key)}
+                  className={`text-[13px] font-mono px-2.5 py-1 rounded-sm border ${
+                    mapMetric === key
+                      ? 'bg-neutral-900 text-white border-neutral-900'
+                      : 'text-neutral-700 border-neutral-300 hover:bg-neutral-100'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={provinceData} margin={{ top: 10, right: 15, left: -20, bottom: 15 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
-                <XAxis dataKey="name" stroke="#a1a1aa" tick={{ fontSize: 12 }} angle={-20} textAnchor="end" interval={0} />
-                <YAxis stroke="#a1a1aa" tick={{ fontSize: 12 }} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
+
+          <div className="flex flex-col md:flex-row gap-6">
+            {/* แผนที่ไทยสูงประมาณ 1.84 เท่าของความกว้าง ความสูงจึงเป็นตัวกำหนดขนาดที่เห็น
+                กว้างกว่านี้ไม่ช่วยให้ใหญ่ขึ้น เพราะ preserveAspectRatio จะจัดกึ่งกลางแล้วเหลือที่ว่างข้างๆ */}
+            <div className="h-[560px] w-full md:w-[330px] shrink-0">
+              <Suspense
+                fallback={
+                  <div className="h-full w-full flex items-center justify-center text-[13px] font-mono text-neutral-600">
+                    กำลังโหลดแผนที่...
+                  </div>
+                }
+              >
+                <ThailandMap
+                  data={mapMetric === 'count' ? provinceMetrics.counts : provinceMetrics.deaths}
+                  metricLabel={mapMetric === 'count' ? 'เหตุการณ์' : 'ผู้เสียชีวิต'}
+                  selected={selectedProvinceFilter === 'ALL' ? null : selectedProvinceFilter}
+                  onSelect={(name) =>
+                    // กดจังหวัดเดิมซ้ำ = ล้างตัวกรอง ผู้ใช้จึงไม่ติดอยู่กับจังหวัดเดียว
+                    setSelectedProvinceFilter((cur) => (cur === name ? 'ALL' : name))
+                  }
                 />
-                <Legend wrapperStyle={LEGEND_STYLE} formatter={legendLabel} />
-                <Bar dataKey="เหตุการณ์" fill="#71717a" radius={[2, 2, 0, 0]} />
-                <Bar dataKey="เสียชีวิต" fill="#d92d20" radius={[2, 2, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+              </Suspense>
+            </div>
+
+            <div className="flex-1 max-w-2xl space-y-5">
+              <Suspense fallback={null}>
+                <ThailandMapLegend
+                  data={mapMetric === 'count' ? provinceMetrics.counts : provinceMetrics.deaths}
+                  metricLabel={mapMetric === 'count' ? 'จำนวนเหตุการณ์' : 'ผู้เสียชีวิต'}
+                />
+              </Suspense>
+
+              <div>
+                <p className="text-[13px] font-mono text-neutral-600 mb-2">5 จังหวัดที่พบมากที่สุด</p>
+                {provinceMetrics.top.length === 0 ? (
+                  <p className="text-[13px] font-sans text-neutral-600">ยังไม่มีข้อมูล</p>
+                ) : (
+                  <ol className="space-y-1.5">
+                    {provinceMetrics.top.map((p, i) => (
+                      <li key={p.name} className="flex items-baseline gap-2 text-[13px] font-sans">
+                        <span className="font-mono text-neutral-600 w-4 shrink-0">{i + 1}.</span>
+                        <button
+                          onClick={() =>
+                            setSelectedProvinceFilter((cur) => (cur === p.name ? 'ALL' : p.name))
+                          }
+                          className="text-neutral-900 hover:text-red-700 underline-offset-2 hover:underline text-left"
+                        >
+                          {p.name}
+                        </button>
+                        <span className="ml-auto font-mono text-neutral-700 shrink-0">
+                          {p.count} เหตุการณ์ · เสียชีวิต {p.deaths}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+
+              {/* เคสที่ไม่รู้จังหวัดวาดบนแผนที่ไม่ได้ ต้องบอกไว้ ไม่ให้หายเงียบ */}
+              <p className="text-[13px] font-sans text-neutral-600">
+                มีข้อมูล {provinceMetrics.provinceCount} จังหวัด จากทั้งหมด 77 จังหวัด
+                {provinceMetrics.unknown > 0 && (
+                  <span className="block mt-0.5">
+                    อีก {provinceMetrics.unknown} เคสไม่ระบุจังหวัด จึงไม่ปรากฏบนแผนที่
+                  </span>
+                )}
+              </p>
+            </div>
           </div>
         </div>
       </div>
