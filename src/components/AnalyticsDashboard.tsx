@@ -31,6 +31,7 @@ import {
   Line,
   CartesianGrid,
 } from 'recharts';
+import type { PieLabelRenderProps } from 'recharts';
 
 /** เรคคอร์ดจากฐานข้อมูลมีคอลัมน์ระบบเพิ่ม แต่แดชบอร์ดใช้เฉพาะสองตัวนี้ */
 type AnalyticsIncident = CrimeIncident & {
@@ -53,6 +54,20 @@ interface AnalyticsDashboardProps {
 const LEGAL_BAC_LIMIT = 50;
 
 /**
+ * กลุ่มอายุผู้ก่อเหตุ/ผู้เสียหาย
+ * เก็บเป็น min/max แล้วใช้ .find() แทน if-else ซ้อน — รูปแบบเดียวกับ bacDistribution
+ * ทำให้เพิ่มหรือขยับช่วงได้ที่เดียวโดยไม่ต้องไล่แก้เงื่อนไขหลายที่
+ */
+const AGE_BUCKETS = [
+  { name: 'ต่ำกว่า 20', min: 0, max: 19 },
+  { name: '20-29', min: 20, max: 29 },
+  { name: '30-39', min: 30, max: 39 },
+  { name: '40-49', min: 40, max: 49 },
+  { name: '50-59', min: 50, max: 59 },
+  { name: '60 ขึ้นไป', min: 60, max: Infinity },
+] as const;
+
+/**
  * สีกราฟ — ไล่เฉดเทาถึงดำ และใช้แดงเป็นตัวเน้นค่าที่ต้องสนใจเท่านั้น
  * ไล่จากเข้มไปอ่อนเพื่อให้อ่านลำดับได้แม้พิมพ์ขาวดำหรือผู้ใช้ตาบอดสี
  */
@@ -61,6 +76,39 @@ const COLORS = ['#18181b', '#52525b', '#71717a', '#a1a1aa', '#c4c4c8', '#d92d20'
 const LEGEND_STYLE = { fontSize: '13px', paddingTop: '10px' } as const;
 /** Recharts ระบายสีข้อความ legend ตามสีของ series (เทาอ่อนได้ 1.74:1 ซึ่งอ่านไม่ออก) จึงห่อสีเอง */
 const legendLabel = (value: string) => <span style={{ color: '#18181b' }}>{value}</span>;
+
+/**
+ * ป้ายชิ้นพาย — บังคับสีข้อความให้เข้มเสมอ
+ *
+ * Recharts ระบายสีป้ายตามสีของชิ้น เหมือนที่ทำกับ legend ชิ้นที่เป็นเทาอ่อน
+ * (เช่นกลุ่ม "ไม่ระบุ") จึงได้ข้อความจางจนอ่านไม่ออกบนพื้นขาว
+ * และ `npm run check:a11y` จับไม่ได้เพราะมันอ่าน CSS `color` ส่วน SVG ใช้ `fill`
+ */
+const pieLabel = (props: PieLabelRenderProps) => {
+  // Recharts ประกาศทุก prop เป็น optional จึงต้องมีค่าตั้งต้นกันคำนวณพลาดเป็น NaN
+  const cx = Number(props.cx ?? 0);
+  const cy = Number(props.cy ?? 0);
+  const outerRadius = Number(props.outerRadius ?? 0);
+  const midAngle = props.midAngle ?? 0;
+  const { percent, name } = props;
+
+  const rad = Math.PI / 180;
+  const r = outerRadius + 16;
+  const x = cx + r * Math.cos(-midAngle * rad);
+  const y = cy + r * Math.sin(-midAngle * rad);
+  return (
+    <text
+      x={x}
+      y={y}
+      fill="#18181b"
+      fontSize={12}
+      textAnchor={x > cx ? 'start' : 'end'}
+      dominantBaseline="central"
+    >
+      {`${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+    </text>
+  );
+};
 
 /** กล่องข้อมูลเมื่อชี้กราฟ — พื้นขาว ตัวอักษรใหญ่พออ่านได้ */
 const TOOLTIP_STYLE = {
@@ -194,10 +242,12 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
   // Chart 4: Hourly Distribution
   const hourlyData = useMemo(() => {
-    const hours: Record<string, number> = {};
+    // นับผู้เสียชีวิตควบคู่กับจำนวนเหตุการณ์ เพื่อให้เห็นว่าช่วงเวลาไหนรุนแรงกว่ากัน
+    // ไม่ใช่แค่เกิดบ่อยกว่ากัน — รูปแบบเดียวกับ weekdayData
+    const hours: Record<string, { เหตุการณ์: number; เสียชีวิต: number }> = {};
     for (let i = 0; i < 24; i += 2) {
       const label = `${String(i).padStart(2, '0')}:00-${String(i + 1).padStart(2, '0')}:59`;
-      hours[label] = 0;
+      hours[label] = { เหตุการณ์: 0, เสียชีวิต: 0 };
     }
 
     filteredIncidents.forEach((inc) => {
@@ -207,13 +257,14 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           const binStart = Math.floor(hourNum / 2) * 2;
           const label = `${String(binStart).padStart(2, '0')}:00-${String(binStart + 1).padStart(2, '0')}:59`;
           if (hours[label] !== undefined) {
-            hours[label]++;
+            hours[label]['เหตุการณ์']++;
+            hours[label]['เสียชีวิต'] += inc.total_death || 0;
           }
         }
       }
     });
 
-    return Object.entries(hours).map(([hour, count]) => ({ hour, เหตุการณ์: count }));
+    return Object.entries(hours).map(([hour, v]) => ({ hour, ...v }));
   }, [filteredIncidents]);
 
   // Chart 5: Province Hotspots
@@ -245,52 +296,84 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
 
   // Age Demographic Distribution
   const ageDemographics = useMemo(() => {
-    const perpGroups = { '< 20 ปี': 0, '20-35 ปี': 0, '36-50 ปี': 0, '> 50 ปี': 0, 'ไม่ระบุ': 0 };
-    const vicGroups = { '< 20 ปี': 0, '20-35 ปี': 0, '36-50 ปี': 0, '> 50 ปี': 0, 'ไม่ระบุ': 0 };
+    const buckets = AGE_BUCKETS.map((b) => ({ ...b, perp: 0, vic: 0 }));
+    const find = (age: number) => buckets.find((b) => age >= b.min && age <= b.max);
+    let perpUnknown = 0;
 
     filteredIncidents.forEach((inc) => {
-      // Perpetrator age
+      // อายุผู้ก่อเหตุ — null คือ "ไม่ทราบ" จริง ต้องนับไว้ ไม่ใช่ทิ้ง
+      // (ปัจจุบัน 11 จาก 13 เคสไม่มีอายุ ถ้าซ่อนไว้กราฟจะดูเหมือนผู้ก่อเหตุทั้งหมดอายุ 60+)
       const pAge = inc.perpetrator_age;
-      if (pAge === null || pAge === undefined) perpGroups['ไม่ระบุ']++;
-      else if (pAge < 20) perpGroups['< 20 ปี']++;
-      else if (pAge <= 35) perpGroups['20-35 ปี']++;
-      else if (pAge <= 50) perpGroups['36-50 ปี']++;
-      else perpGroups['> 50 ปี']++;
+      const pBucket = pAge === null || pAge === undefined ? undefined : find(pAge);
+      if (pBucket) pBucket.perp++;
+      else perpUnknown++;
 
-      // Victims ages
+      // อายุผู้เสียหาย — ช่องที่ว่างมักแปลว่า "ไม่มีเหยื่อคนที่ 2/3" ไม่ใช่ "ไม่ทราบอายุ"
+      // จึงข้ามไป ไม่นับเข้าแท่งไม่ระบุ แท่งนั้นจึงมีเฉพาะผู้ก่อเหตุโดยตั้งใจ
       [inc.victim_1_age, inc.victim_2_age, inc.victim_3_age].forEach((vAge) => {
-        if (vAge !== null && vAge !== undefined) {
-          if (vAge < 20) vicGroups['< 20 ปี']++;
-          else if (vAge <= 35) vicGroups['20-35 ปี']++;
-          else if (vAge <= 50) vicGroups['36-50 ปี']++;
-          else vicGroups['> 50 ปี']++;
-        }
+        if (vAge === null || vAge === undefined) return;
+        const vBucket = find(vAge);
+        if (vBucket) vBucket.vic++;
       });
     });
 
     return [
-      { group: '< 20 ปี', ผู้ก่อเหตุ: perpGroups['< 20 ปี'], ผู้เสียหาย: vicGroups['< 20 ปี'] },
-      { group: '20-35 ปี', ผู้ก่อเหตุ: perpGroups['20-35 ปี'], ผู้เสียหาย: vicGroups['20-35 ปี'] },
-      { group: '36-50 ปี', ผู้ก่อเหตุ: perpGroups['36-50 ปี'], ผู้เสียหาย: vicGroups['36-50 ปี'] },
-      { group: '> 50 ปี', ผู้ก่อเหตุ: perpGroups['> 50 ปี'], ผู้เสียหาย: vicGroups['> 50 ปี'] },
+      ...buckets.map((b) => ({ group: b.name, ผู้ก่อเหตุ: b.perp, ผู้เสียหาย: b.vic })),
+      { group: 'ไม่ระบุ', ผู้ก่อเหตุ: perpUnknown, ผู้เสียหาย: 0 },
     ];
   }, [filteredIncidents]);
 
   // ระดับแอลกอฮอล์เทียบเกณฑ์กฎหมาย 50 mg%
   const bacDistribution = useMemo(() => {
+    // overLimit กำหนดตายตัวต่อกลุ่ม ห้ามคำนวณจาก b.min > LEGAL_BAC_LIMIT
+    // เพราะกลุ่ม 50-100 มี min = 50 ซึ่ง 50 > 50 เป็นเท็จ แท่งจะไม่ถูกเน้นสีทั้งที่ค่าส่วนใหญ่เกินเกณฑ์
     const buckets = [
-      { name: 'ไม่เกิน 50', min: 0, max: 50, count: 0 },
-      { name: '51-100', min: 51, max: 100, count: 0 },
-      { name: '101-150', min: 101, max: 150, count: 0 },
-      { name: '151-200', min: 151, max: 200, count: 0 },
-      { name: 'เกิน 200', min: 201, max: Infinity, count: 0 },
+      { name: 'ต่ำกว่า 50', min: 0, max: 49, count: 0, overLimit: false },
+      { name: '50-100', min: 50, max: 100, count: 0, overLimit: true },
+      { name: '101-150', min: 101, max: 150, count: 0, overLimit: true },
+      { name: '151-200', min: 151, max: 200, count: 0, overLimit: true },
+      { name: 'มากกว่า 200', min: 201, max: Infinity, count: 0, overLimit: true },
     ];
+    // เดิมทิ้งเคสที่ไม่มีผลตรวจไปเฉยๆ ทำให้กราฟดูเหมือนทุกเคสถูกตรวจหมด
+    // ทั้งที่ส่วนใหญ่ไม่มีค่า — ต้องนับไว้แล้วแสดงเป็นแท่งของตัวเอง
+    let unmeasured = 0;
     filteredIncidents.forEach((inc) => {
-      if (inc.alcohol_level === null || inc.alcohol_level === undefined) return;
-      const bucket = buckets.find((b) => inc.alcohol_level! >= b.min && inc.alcohol_level! <= b.max);
+      const level = inc.alcohol_level;
+      if (level === null || level === undefined) {
+        unmeasured++;
+        return;
+      }
+      const bucket = buckets.find((b) => level >= b.min && level <= b.max);
       if (bucket) bucket.count++;
     });
-    return buckets.map((b) => ({ name: b.name, 'จำนวนเคส': b.count, overLimit: b.min > LEGAL_BAC_LIMIT }));
+    return [
+      ...buckets.map((b) => ({ name: b.name, 'จำนวนเคส': b.count, overLimit: b.overLimit })),
+      { name: 'ไม่ตรวจ/ไม่ระบุ', 'จำนวนเคส': unmeasured, overLimit: false },
+    ];
+  }, [filteredIncidents]);
+
+  /**
+   * ประวัติการกระทำความผิดซ้ำ
+   *
+   * ค่าว่างของคอลัมน์นี้เป็นสตริงว่าง ไม่ใช่ null เพราะ rowToRecord แปลงให้ตั้งแต่ชั้น repo
+   * และคอลัมน์ไม่มี CHECK constraint จึงมีค่านอก vocab ได้ — ทุกอย่างที่ไม่ใช่ ใช่/ไม่ใช่ จึงเข้าไม่ระบุ
+   *
+   * กำหนดสีตามความหมายแทนการไล่ตาม index เพราะ .filter() ด้านล่างทำให้ลำดับเลื่อนได้
+   */
+  const recidivismData = useMemo(() => {
+    let yes = 0;
+    let no = 0;
+    let unknown = 0;
+    filteredIncidents.forEach((inc) => {
+      if (inc.recidivism === 'ใช่') yes++;
+      else if (inc.recidivism === 'ไม่ใช่') no++;
+      else unknown++;
+    });
+    return [
+      { name: 'ใช่', value: yes, fill: ACCENT },
+      { name: 'ไม่ใช่', value: no, fill: '#71717a' },
+      { name: 'ไม่ระบุ', value: unknown, fill: '#d4d4d8' },
+    ].filter((d) => d.value > 0);
   }, [filteredIncidents]);
 
   // การกระจายตามวันในสัปดาห์ (คาดว่ากระจุกช่วงสุดสัปดาห์)
@@ -576,14 +659,18 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
           </div>
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={hourlyData} margin={{ top: 10, right: 15, left: -20, bottom: 20 }}>
+              <LineChart data={hourlyData} margin={{ top: 10, right: 15, left: -20, bottom: 32 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
                 <XAxis dataKey="hour" stroke="#a1a1aa" tick={{ fontSize: 12 }} angle={-35} textAnchor="end" interval={0} />
                 <YAxis stroke="#a1a1aa" tick={{ fontSize: 12 }} allowDecimals={false} />
                 <Tooltip
                   contentStyle={TOOLTIP_STYLE}
                 />
-                <Line type="monotone" dataKey="เหตุการณ์" stroke="#e4e4e7" strokeWidth={2} dot={{ r: 3, fill: '#ffffff' }} activeDot={{ r: 5 }} />
+                <Legend wrapperStyle={LEGEND_STYLE} formatter={legendLabel} />
+                {/* สีเดิมของเส้นนี้คือ #e4e4e7 ซึ่งเกือบขาว มองแทบไม่เห็นบนพื้นขาว
+                    เปลี่ยนเป็นเทากลางตามที่กราฟอื่นในไฟล์ใช้กับซีรีส์นับจำนวน */}
+                <Line type="monotone" dataKey="เหตุการณ์" stroke={MUTED} strokeWidth={2} dot={{ r: 3, fill: '#ffffff' }} activeDot={{ r: 5 }} />
+                <Line type="monotone" dataKey="เสียชีวิต" stroke={ACCENT} strokeWidth={2} dot={{ r: 3, fill: '#ffffff' }} activeDot={{ r: 5 }} />
               </LineChart>
             </ResponsiveContainer>
           </div>
@@ -687,11 +774,11 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
               ช่วงอายุ: ผู้ก่อเหตุเทียบผู้เสียหาย
             </h3>
           </div>
-          <div className="h-64 w-full">
+          <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={ageDemographics} margin={{ top: 10, right: 15, left: -20, bottom: 5 }}>
+              <BarChart data={ageDemographics} margin={{ top: 10, right: 15, left: -20, bottom: 24 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
-                <XAxis dataKey="group" stroke="#a1a1aa" tick={{ fontSize: 12 }} />
+                <XAxis dataKey="group" stroke="#a1a1aa" tick={{ fontSize: 12 }} angle={-20} textAnchor="end" interval={0} />
                 <YAxis stroke="#a1a1aa" tick={{ fontSize: 12 }} allowDecimals={false} />
                 <Tooltip
                   contentStyle={TOOLTIP_STYLE}
@@ -744,12 +831,15 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
             <span className="text-red-700">
               {stats.overLimitRate}% ของเคสที่มีผลตรวจเกินเกณฑ์
             </span>
+            <span className="block mt-0.5">
+              แท่ง &quot;ไม่ตรวจ/ไม่ระบุ&quot; รวมกรณีที่ประเมินด้วยการสังเกตอาการ ซึ่งไม่มีค่าตัวเลขตามนิยาม
+            </span>
           </p>
-          <div className="h-56 w-full">
+          <div className="h-64 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={bacDistribution} margin={{ top: 10, right: 15, left: -20, bottom: 5 }}>
+              <BarChart data={bacDistribution} margin={{ top: 10, right: 15, left: -20, bottom: 28 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
-                <XAxis dataKey="name" stroke="#a1a1aa" tick={{ fontSize: 12 }} />
+                <XAxis dataKey="name" stroke="#a1a1aa" tick={{ fontSize: 12 }} angle={-20} textAnchor="end" interval={0} />
                 <YAxis stroke="#a1a1aa" tick={{ fontSize: 12 }} allowDecimals={false} />
                 <Tooltip
                   contentStyle={TOOLTIP_STYLE}
@@ -784,6 +874,45 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
                 <Bar dataKey="เหตุการณ์" fill="#71717a" radius={[2, 2, 0, 0]} />
                 <Bar dataKey="เสียชีวิต" fill="#d92d20" radius={[2, 2, 0, 0]} />
               </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* ประวัติการกระทำความผิดซ้ำ */}
+        <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-sm font-semibold text-neutral-800 flex items-center gap-1.5">
+              <RefreshCw className="w-3.5 h-3.5 text-neutral-600" />
+              ประวัติการกระทำความผิดซ้ำ
+            </h3>
+          </div>
+          <p className="text-xs font-mono text-neutral-600 mb-3">
+            ระบุแล้ว {stats.total - (recidivismData.find((d) => d.name === 'ไม่ระบุ')?.value ?? 0)} จาก{' '}
+            {stats.total} เคส
+          </p>
+          <div className="h-56 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={recidivismData.length > 0 ? recidivismData : [{ name: 'ไม่มีข้อมูล', value: 1, fill: '#e4e4e7' }]}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={75}
+                  innerRadius={35}
+                  paddingAngle={3}
+                  label={pieLabel}
+                  labelLine={false}
+                >
+                  {(recidivismData.length > 0 ? recidivismData : [{ name: 'ไม่มีข้อมูล', value: 1, fill: '#e4e4e7' }]).map(
+                    (entry, index) => (
+                      <Cell key={`recid-${index}`} fill={entry.fill} />
+                    )
+                  )}
+                </Pie>
+                <Tooltip contentStyle={TOOLTIP_STYLE} />
+              </PieChart>
             </ResponsiveContainer>
           </div>
         </div>
