@@ -32,22 +32,66 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     await requireUser(req, 'editor');
 
-    const { url: givenUrl, articleId } = (req.body ?? {}) as Record<string, string>;
+    const { url: givenUrl, articleId, action } = (req.body ?? {}) as Record<string, string>;
 
     if (!articleId) {
       return res.status(400).json({ error: 'ไม่ได้ระบุรายการที่จะแนบ URL' });
     }
 
     const db = supabaseAdmin();
+
+    /* ---- ถอดลิงก์ Google News (อ่านอย่างเดียว ไม่เขียนอะไร) ----
+     *
+     * รวมมาไว้ใน endpoint นี้แทนที่จะแยกไฟล์ เพราะ endpoint แยกที่สร้างไว้ก่อนหน้า
+     * ตายตั้งแต่โหลดโมดูลบนเซิร์ฟเวอร์จริง (พังตั้งแต่ขั้นยืนยันตัวตน ทั้งที่ยังไม่แตะเน็ต)
+     * ตัวแปรเดียวที่ต่างคือการ import ตัวถอดลิงก์แบบปกติที่หัวไฟล์
+     *
+     * ตรงนี้จึงใช้ dynamic import แทน: ถ้าโมดูลโหลดไม่ได้ มันจะ throw เข้า try/catch
+     * แล้วกลายเป็น JSON ที่อ่านรู้เรื่อง ไม่ใช่ 500 เปล่าที่แพลตฟอร์มโยนมา
+     * และ endpoint นี้ยังบันทึกข้อมูลได้ตามปกติแม้ตัวถอดลิงก์จะพังสนิท
+     */
+    if (action === 'resolve') {
+      const { data: lead, error: readError } = await db
+        .from('articles')
+        .select('gnews_link, url')
+        .eq('id', articleId)
+        .maybeSingle();
+
+      if (readError) {
+        return res.status(200).json({ url: null, reason: `อ่านรายการไม่สำเร็จ: ${readError.message}` });
+      }
+      // เคยยืนยันไปแล้ว ใช้ของเดิม ไม่ต้องไปกวน Google ซ้ำ
+      if (lead?.url) return res.status(200).json({ url: lead.url, cached: true });
+      if (!lead?.gnews_link) {
+        return res.status(200).json({ url: null, reason: 'รายการนี้ไม่มีลิงก์ Google News ให้ถอด' });
+      }
+
+      try {
+        const { resolveGoogleNewsUrl } = await import('../_lib/gnews');
+        const resolved = await Promise.race([
+          resolveGoogleNewsUrl(lead.gnews_link),
+          new Promise<{ url: string | null; error: string }>((done) =>
+            setTimeout(() => done({ url: null, error: 'เกินเวลาที่กำหนด (12000ms)' }), 12000)
+          ),
+        ]);
+        if (!resolved.url) console.warn('[attach] ถอดลิงก์ไม่สำเร็จ', { articleId, reason: resolved.error });
+        return res.status(200).json({ url: resolved.url ?? null, reason: resolved.error ?? null });
+      } catch (err: any) {
+        // รวมถึงกรณีโหลดโมดูลไม่ได้ — ต้องรายงานเป็นข้อความ ไม่ใช่ปล่อยให้ฟังก์ชันตาย
+        const reason = `ตัวถอดลิงก์ใช้งานไม่ได้: ${String(err?.message ?? err).slice(0, 300)}`;
+        console.warn('[attach] ', reason);
+        return res.status(200).json({ url: null, reason });
+      }
+    }
     let url = (givenUrl ?? '').trim();
     /** true เมื่อ URL มาจากการถอดอัตโนมัติ ไม่ใช่เจ้าหน้าที่วางมา */
     let autoResolved = false;
 
     if (!url) {
-      // attach ไม่ถอดลิงก์เองอีกแล้ว — หน้าจอต้องเรียก /api/leads/resolve มาก่อน
-      // เหตุผล: การคุยกับ Google เป็นงานที่พังได้ ห้ามให้มันลากเส้นทางบันทึกข้อมูลล้มไปด้วย
+      // ต้องส่ง url มาเสมอ — หน้าจอเรียก action:'resolve' มาก่อนเพื่อให้ได้ url
+      // แยกสองขั้นเพราะการคุยกับ Google พังได้ ห้ามให้มันลากขั้นบันทึกข้อมูลล้มไปด้วย
       return res.status(422).json({
-        error: 'ไม่ได้ส่ง URL มา — ถอดลิงก์ที่ /api/leads/resolve ก่อน หรือให้เจ้าหน้าที่วาง URL เอง',
+        error: 'ไม่ได้ส่ง URL มา — ต้องถอดลิงก์ก่อน หรือให้เจ้าหน้าที่วาง URL เอง',
         needsManualUrl: true,
       });
     }

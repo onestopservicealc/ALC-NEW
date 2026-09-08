@@ -878,7 +878,7 @@ const NeedsUrlPanel: React.FC<{
   /**
    * ถอดลิงก์ล่วงหน้าทันทีที่ข่าวขึ้นจอ
    *
-   * แยกไปเรียก /api/leads/resolve ไม่ใช่ทำตอนกดปุ่ม เพราะ 2 เหตุผล:
+   * เรียก action:'resolve' ล่วงหน้า ไม่ใช่ทำตอนกดปุ่ม เพราะ 2 เหตุผล:
    *   1. เจ้าหน้าที่ได้เห็น URL ก่อนกดยืนยัน จึงตรวจได้ว่าเป็นข่าวเดียวกันจริง
    *   2. ถ้าถอดไม่ได้ หน้าจอเปิดช่องให้วางเองตั้งแต่ยังไม่กด ไม่ใช่กดแล้วค่อยเจอปัญหา
    *
@@ -896,7 +896,10 @@ const NeedsUrlPanel: React.FC<{
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          const r = await callApi<ResolveResponse>('/api/leads/resolve', { articleId: leadId });
+          const r = await callApi<ResolveResponse>('/api/leads/attach', {
+            articleId: leadId,
+            action: 'resolve',
+          });
           if (cancelled) return;
           if (r.url) {
             setResolvedUrl(r.url);
@@ -1164,28 +1167,19 @@ const NeedsUrlPanel: React.FC<{
    * ขั้นแรกที่ไม่ตอบกลับคือขั้นไหน ซึ่งชี้จุดพังได้ตรงๆ
    */
   const runDiagnostics = async () => {
-    const steps = [
-      [1, 'ฟังก์ชันบูต + ยืนยันตัวตน'],
-      [2, 'โหลดโมดูลถอดลิงก์'],
-      [3, 'ต่อเน็ตออกนอก (example.com)'],
-      [4, 'ต่อไปที่ news.google.com'],
-    ] as const;
-
+    if (!current) return;
     setDiag(['กำลังตรวจ...']);
     const lines: string[] = [];
-    for (const [n, label] of steps) {
-      try {
-        const r = await callApi<Record<string, unknown>>('/api/leads/resolve', { step: n });
-        const extra = [r.status, r.bytes ? `${r.bytes} ไบต์` : null, r.ms ? `${r.ms}ms` : null]
-          .filter(Boolean)
-          .join(' · ');
-        lines.push(`✓ ${n}. ${label}${extra ? ` — ${extra}` : ''}`);
-      } catch (err: any) {
-        lines.push(`✕ ${n}. ${label} — ${String(err?.message ?? err)}`);
-        lines.push('↑ ขั้นนี้คือจุดที่พัง');
-        break;
-      }
-      setDiag([...lines]);
+    try {
+      const r = await callApi<ResolveResponse>('/api/leads/attach', {
+        articleId: current.id,
+        action: 'resolve',
+      });
+      lines.push('✓ เซิร์ฟเวอร์ตอบกลับได้ปกติ');
+      lines.push(r.url ? `✓ ถอดลิงก์สำเร็จ: ${r.url}` : `✕ ถอดไม่สำเร็จ — ${r.reason ?? 'ไม่ทราบสาเหตุ'}`);
+    } catch (err: any) {
+      lines.push(`✕ เซิร์ฟเวอร์ล้มเหลว — ${String(err?.message ?? err)}`);
+      lines.push('↑ ส่งข้อความนี้ให้ผู้ดูแลระบบ');
     }
     setDiag(lines);
   };
