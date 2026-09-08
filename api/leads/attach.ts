@@ -16,11 +16,11 @@
  * เพราะงานนั้นพังได้ (ช้า ถูกบล็อก ฟังก์ชันถูกฆ่า) และเคยลาก endpoint นี้ล้มไปด้วย
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireUser } from '../_lib/auth';
-import { canonicalizeUrl } from '../_lib/http';
-import { linkArticleToUrl } from '../_lib/leads';
-import { fail, methodNotAllowed } from '../_lib/respond';
-import { supabaseAdmin } from '../_lib/supabaseAdmin';
+import { requireUser } from '../_lib/auth.js';
+import { canonicalizeUrl } from '../_lib/http.js';
+import { linkArticleToUrl } from '../_lib/leads.js';
+import { fail, methodNotAllowed } from '../_lib/respond.js';
+import { supabaseAdmin } from '../_lib/supabaseAdmin.js';
 
 // ค่านี้ในไฟล์ชนะค่าใน vercel.json เสมอ (@vercel/node ส่ง staticConfig.maxDuration เข้า Lambda ตรงๆ)
 // 30 วินาทีพอเหลือเฟือ เพราะ endpoint นี้คุยกับฐานข้อมูลอย่างเดียว ไม่ต่อเน็ตออกนอก
@@ -51,6 +51,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
      * และ endpoint นี้ยังบันทึกข้อมูลได้ตามปกติแม้ตัวถอดลิงก์จะพังสนิท
      */
     if (action === 'resolve') {
+      // สวิตช์ปิดฉุกเฉิน — ตั้ง DISABLE_GNEWS_RESOLVE=1 ใน Vercel แล้ว redeploy
+      // ระบบจะข้ามการถอดลิงก์ไปใช้ทางวาง URL เองทันที โดยไม่ต้องแก้โค้ด
+      if (process.env.DISABLE_GNEWS_RESOLVE === '1') {
+        return res.status(200).json({ url: null, reason: 'ปิดการถอดลิงก์อัตโนมัติไว้ (DISABLE_GNEWS_RESOLVE=1)' });
+      }
+
       const { data: lead, error: readError } = await db
         .from('articles')
         .select('gnews_link, url')
@@ -67,7 +73,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       try {
-        const { resolveGoogleNewsUrl } = await import('../_lib/gnews');
+        const { resolveGoogleNewsUrl } = await import('../_lib/gnews.js');
         const resolved = await Promise.race([
           resolveGoogleNewsUrl(lead.gnews_link),
           new Promise<{ url: string | null; error: string }>((done) =>

@@ -6,7 +6,7 @@
  *  - โมเดลตัดสินความเกี่ยวข้องได้แม่นกว่าเมื่อถูกบังคับให้สกัดรายละเอียดไปด้วย
  */
 import { GoogleGenAI, Type } from '@google/genai';
-import { GEMINI_MODEL, GEMINI_MODELS, intEnv, requireEnv } from './env';
+import { GEMINI_MODEL, GEMINI_MODELS, intEnv, requireEnv } from './env.js';
 
 let client: GoogleGenAI | null = null;
 

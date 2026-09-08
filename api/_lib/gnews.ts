@@ -14,8 +14,8 @@
  * เปราะตามธรรมชาติ เพราะพึ่ง endpoint ภายในที่ Google ไม่รับประกัน
  * ทุกจุดที่พังจึงคืน `{ url: null, error }` เสมอ ไม่ throw — ผู้เรียกต้องมีทางถอยให้คนวาง URL เอง
  */
-import { USER_AGENT } from './env';
-import { fetchText } from './http';
+import { USER_AGENT } from './env.js';
+import { fetchText } from './http.js';
 
 export interface ResolveResult {
   url: string | null;
@@ -104,9 +104,10 @@ const DEFAULT_TIMEOUT_MS = 6000;
  * เพดานขนาดหน้าที่ยอมโหลด
  *
  * หน้าบทความปกติ ~580 KB แต่หน้าที่ Google ส่งให้ตอนบล็อกคือ ~1.86 MB
- * ไม่จำกัดขนาดไว้ = ยอมดูดข้อมูลก้อนใหญ่เข้าหน่วยความจำฟรีๆ ทั้งที่ต้องการแค่สองแอตทริบิวต์
+ * และ Google ไม่ส่ง content-length มาเลย (chunked ทั้งหมด) จึงต้องอ่านทีละก้อนแล้วตัดเอง
+ * ไม่งั้นถ้าปลายทางส่งก้อนใหญ่มา ฟังก์ชันจะตายด้วย out of memory ซึ่งดักไม่ได้
  */
-const MAX_PAGE_BYTES = 1_500_000;
+const MAX_PAGE_BYTES = 900_000;
 
 async function resolve(link: string, timeoutMs: number): Promise<ResolveResult> {
   const id = articleId(link);

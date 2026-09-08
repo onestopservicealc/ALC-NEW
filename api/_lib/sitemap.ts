@@ -8,7 +8,7 @@
  * การคัดกรองจึงต้องรอจนกว่าจะดึงหน้าเว็บมาก่อน (stage A2 ใน ingest.ts)
  */
 import { XMLParser } from 'fast-xml-parser';
-import { fetchText } from './http';
+import { fetchText } from './http.js';
 
 export interface SitemapResult {
   ok: boolean;

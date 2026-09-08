@@ -6,7 +6,7 @@
  * ที่มีเนื้อข่าวเต็มมาด้วย ~9,000 ตัวอักษร → ไม่ต้องไป fetch หน้าเว็บเลย
  */
 import { XMLParser } from 'fast-xml-parser';
-import { fetchText } from './http';
+import { fetchText } from './http.js';
 
 export interface FeedItem {
   title: string;

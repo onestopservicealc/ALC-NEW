@@ -8,9 +8,9 @@
  * ย้ายออกมาเป็นฟังก์ชันเดียวเพื่อไม่ให้เกิดชุดที่สองที่ต้องดูแลแยกกันอีก
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { CrimeIncident } from '../../src/types/dataDictionary';
-import { cleanText, deriveAlcoholInvolved } from '../../src/lib/normalize';
-import type { ScreeningOutput } from './gemini';
+import type { CrimeIncident } from '../../src/types/dataDictionary.js';
+import { cleanText, deriveAlcoholInvolved } from '../../src/lib/normalize.js';
+import type { ScreeningOutput } from './gemini.js';
 
 /** ค่าที่อนุญาตของ alcohol_role — ต้องตรงกับ check constraint ใน 0001_init.sql */
 const ALCOHOL_ROLES = ['ผู้ก่อเหตุดื่ม', 'เหยื่อดื่ม', 'ทั้งสองฝ่ายดื่ม', 'ไม่ชัดเจน'];

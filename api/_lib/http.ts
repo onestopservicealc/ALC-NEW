@@ -4,7 +4,7 @@
  * - จำกัดอัตราการยิงต่อโดเมน
  * - timeout ชัดเจน ไม่ให้ค้างจนหมดงบเวลาของ function
  */
-import { intEnv, USER_AGENT } from './env';
+import { intEnv, USER_AGENT } from './env.js';
 
 /**
  * เว้นระยะระหว่าง request ของโดเมนเดียวกัน
@@ -58,6 +58,43 @@ export interface FetchTextResult {
   error?: string;
 }
 
+/**
+ * อ่าน body ทีละก้อนแล้วหยุดเองเมื่อเกินเพดาน
+ *
+ * ทำไมเช็ค content-length ไม่พอ: ทดสอบแล้วพบว่า Google ไม่ส่ง content-length มาเลย
+ * ใช้ chunked ทั้งหมด ด่านที่ดูแต่ header จึงไม่เคยทำงาน และ res.text() จะดูดทุกอย่าง
+ * เข้าหน่วยความจำไม่จำกัด ถ้าปลายทางส่งก้อนใหญ่มา ฟังก์ชันจะตายด้วย out of memory
+ * ซึ่ง try/catch ดักไม่ได้ เพราะโปรเซสถูกฆ่าทั้งตัว ไม่ใช่ throw
+ */
+async function readCapped(
+  res: Response,
+  maxBytes: number
+): Promise<{ text: string; truncated: boolean }> {
+  const reader = res.body?.getReader();
+  if (!reader) return { text: await res.text(), truncated: false };
+
+  const decoder = new TextDecoder();
+  let text = '';
+  let total = 0;
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        // ตัดการเชื่อมต่อทิ้งทันที ไม่ต้องรอให้ดาวน์โหลดจบ
+        await reader.cancel().catch(() => undefined);
+        return { text, truncated: true };
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    return { text: text + decoder.decode(), truncated: false };
+  } finally {
+    reader.releaseLock?.();
+  }
+}
+
 export async function fetchText(
   url: string,
   opts: {
@@ -97,27 +134,21 @@ export async function fetchText(
         'Accept-Language': 'th,en;q=0.8',
       },
     });
-    const declared = Number(res.headers.get('content-length'));
-    if (opts.maxBytes && Number.isFinite(declared) && declared > opts.maxBytes) {
-      return {
-        ok: false,
-        status: res.status,
-        body: '',
-        finalUrl: res.url || url,
-        error: `หน้าเว็บใหญ่เกินกำหนด (${declared} ไบต์)`,
-      };
+    if (opts.maxBytes) {
+      const capped = await readCapped(res, opts.maxBytes);
+      if (capped.truncated) {
+        return {
+          ok: false,
+          status: res.status,
+          body: '',
+          finalUrl: res.url || url,
+          error: `หน้าเว็บใหญ่เกินกำหนด (เกิน ${opts.maxBytes} ไบต์)`,
+        };
+      }
+      return { ok: res.ok, status: res.status, body: capped.text, finalUrl: res.url || url };
     }
 
     const body = await res.text();
-    if (opts.maxBytes && body.length > opts.maxBytes) {
-      return {
-        ok: false,
-        status: res.status,
-        body: '',
-        finalUrl: res.url || url,
-        error: `หน้าเว็บใหญ่เกินกำหนด (${body.length} ไบต์)`,
-      };
-    }
     return { ok: res.ok, status: res.status, body, finalUrl: res.url || url };
   } catch (err: any) {
     return {

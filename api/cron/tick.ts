@@ -6,10 +6,10 @@
  * และแต่ละ invocation มีงบเวลา 300 วินาที (ค่าสูงสุดของ Hobby)
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { assertCronAuthorized } from '../_lib/auth';
-import { runIngest } from '../_lib/ingest';
-import { fail } from '../_lib/respond';
-import { supabaseAdmin } from '../_lib/supabaseAdmin';
+import { assertCronAuthorized } from '../_lib/auth.js';
+import { runIngest } from '../_lib/ingest.js';
+import { fail } from '../_lib/respond.js';
+import { supabaseAdmin } from '../_lib/supabaseAdmin.js';
 
 export const config = { maxDuration: 300 };
 

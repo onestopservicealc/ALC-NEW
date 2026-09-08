@@ -1,7 +1,7 @@
 /** ตรวจสิทธิ์สำหรับ endpoint ฝั่ง server */
 import type { VercelRequest } from '@vercel/node';
-import { requireEnv } from './env';
-import { supabaseAdmin } from './supabaseAdmin';
+import { requireEnv } from './env.js';
+import { supabaseAdmin } from './supabaseAdmin.js';
 
 /** เทียบสตริงแบบไม่รั่วเวลา (กัน timing attack กับ CRON_SECRET) */
 function safeEqual(a: string, b: string): boolean {

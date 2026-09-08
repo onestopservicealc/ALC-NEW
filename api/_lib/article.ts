@@ -6,8 +6,8 @@
  */
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
-import { fetchText } from './http';
-import { stripHtml } from './rss';
+import { fetchText } from './http.js';
+import { stripHtml } from './rss.js';
 
 export interface ArticleText {
   ok: boolean;

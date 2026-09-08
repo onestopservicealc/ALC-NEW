@@ -3,7 +3,7 @@
  * ใช้เฉพาะใน Vercel Functions เท่านั้น ห้าม import จากโค้ดฝั่ง browser
  */
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { requireEnv } from './env';
+import { requireEnv } from './env.js';
 
 let cached: SupabaseClient | null = null;
 

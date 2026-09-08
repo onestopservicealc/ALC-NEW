@@ -10,15 +10,15 @@
  * ตอนนี้ใช้ persistIncident() ตัวเดียวกับ pipeline อัตโนมัติ
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { fetchArticleText } from '../_lib/article';
-import { requireUser } from '../_lib/auth';
-import { screenAndExtract } from '../_lib/gemini';
-import { canonicalizeUrl } from '../_lib/http';
-import { findMatchingLead, linkArticleToUrl } from '../_lib/leads';
-import { normalizeAlcoholRole, persistIncident } from '../_lib/persistIncident';
-import { fail, methodNotAllowed } from '../_lib/respond';
-import { supabaseAdmin } from '../_lib/supabaseAdmin';
-import { deriveAlcoholInvolved, normalizeIncident } from '../../src/lib/normalize';
+import { fetchArticleText } from '../_lib/article.js';
+import { requireUser } from '../_lib/auth.js';
+import { screenAndExtract } from '../_lib/gemini.js';
+import { canonicalizeUrl } from '../_lib/http.js';
+import { findMatchingLead, linkArticleToUrl } from '../_lib/leads.js';
+import { normalizeAlcoholRole, persistIncident } from '../_lib/persistIncident.js';
+import { fail, methodNotAllowed } from '../_lib/respond.js';
+import { supabaseAdmin } from '../_lib/supabaseAdmin.js';
+import { deriveAlcoholInvolved, normalizeIncident } from '../../src/lib/normalize.js';
 
 export const config = { maxDuration: 60 };
 

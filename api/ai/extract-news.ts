@@ -5,11 +5,11 @@
  * ทำให้โมเดลเดา URL และสำนักข่าวเอง ทั้งที่เป็นฟิลด์ Not Null ตามสเปก
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireUser } from '../_lib/auth';
-import { screenAndExtract } from '../_lib/gemini';
-import { normalizeAlcoholRole } from '../_lib/persistIncident';
-import { fail, methodNotAllowed } from '../_lib/respond';
-import { normalizeIncident, deriveAlcoholInvolved } from '../../src/lib/normalize';
+import { requireUser } from '../_lib/auth.js';
+import { screenAndExtract } from '../_lib/gemini.js';
+import { normalizeAlcoholRole } from '../_lib/persistIncident.js';
+import { fail, methodNotAllowed } from '../_lib/respond.js';
+import { normalizeIncident, deriveAlcoholInvolved } from '../../src/lib/normalize.js';
 
 export const config = { maxDuration: 60 };
 

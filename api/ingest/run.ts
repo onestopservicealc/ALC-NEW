@@ -1,9 +1,9 @@
 /** ปุ่ม "ดึงข่าวเดี๋ยวนี้" สำหรับเจ้าหน้าที่ (ต้องมีสิทธิ์ editor ขึ้นไป) */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { requireUser } from '../_lib/auth';
-import { runIngest } from '../_lib/ingest';
-import { fail, methodNotAllowed } from '../_lib/respond';
-import { supabaseAdmin } from '../_lib/supabaseAdmin';
+import { requireUser } from '../_lib/auth.js';
+import { runIngest } from '../_lib/ingest.js';
+import { fail, methodNotAllowed } from '../_lib/respond.js';
+import { supabaseAdmin } from '../_lib/supabaseAdmin.js';
 
 export const config = { maxDuration: 300 };
 

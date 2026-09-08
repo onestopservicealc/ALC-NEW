@@ -9,16 +9,16 @@
  * ทุกสเตจหยุดได้กลางคัน และรอบถัดไปทำงานต่อจากเดิมได้ เพราะสถานะอยู่ใน DB ทั้งหมด
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { intEnv } from './env';
-import { fetchArticleText } from './article';
-import { canonicalizeUrl } from './http';
-import { DailyQuotaExhaustedError, screenAndExtract } from './gemini';
-import { persistIncident } from './persistIncident';
-import { fetchFeed, isGoogleNewsLink, splitGoogleNewsTitle, type FeedItem } from './rss';
-import { fetchSitemap } from './sitemap';
-import { hostOf, titlesLookAlike } from './leads';
-import { DEFAULT_THRESHOLDS, LEAD_THRESHOLDS, screenArticle } from './screen';
-import { normalizeIncident } from '../../src/lib/normalize';
+import { intEnv } from './env.js';
+import { fetchArticleText } from './article.js';
+import { canonicalizeUrl } from './http.js';
+import { DailyQuotaExhaustedError, screenAndExtract } from './gemini.js';
+import { persistIncident } from './persistIncident.js';
+import { fetchFeed, isGoogleNewsLink, splitGoogleNewsTitle, type FeedItem } from './rss.js';
+import { fetchSitemap } from './sitemap.js';
+import { hostOf, titlesLookAlike } from './leads.js';
+import { DEFAULT_THRESHOLDS, LEAD_THRESHOLDS, screenArticle } from './screen.js';
+import { normalizeIncident } from '../../src/lib/normalize.js';
 
 export interface IngestOptions {
   trigger: 'cron' | 'manual';
