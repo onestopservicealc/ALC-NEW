@@ -9,3 +9,6 @@
 
 # ไฟล์ SQL ที่มีค่าลับ สร้างจาก npm run setup:cron
 pg-cron-setup.sql
+
+# ไฟล์สำรองก่อนล้างข้อมูล มีข้อมูลจริง ห้ามขึ้น git
+backup-before-cleanup-*.json

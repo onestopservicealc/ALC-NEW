@@ -9,7 +9,7 @@
  * ทุกสเตจหยุดได้กลางคัน และรอบถัดไปทำงานต่อจากเดิมได้ เพราะสถานะอยู่ใน DB ทั้งหมด
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { intEnv } from './env.js';
+import { intEnv, optionalEnv } from './env.js';
 import { fetchArticleText } from './article.js';
 import { canonicalizeUrl } from './http.js';
 import { DailyQuotaExhaustedError, screenAndExtract } from './gemini.js';
@@ -50,6 +50,8 @@ export interface IngestSummary {
   leads_pending: number;
   /** lead ที่ถูกตัดตั้งแต่ต้นทางเพราะไม่ใช่หน้าข่าว หรือมีฟีดตรงอยู่แล้ว */
   leads_skipped: number;
+  /** ข่าวที่เก่ากว่าวันเริ่มเก็บข้อมูล — ตัดทิ้งตั้งแต่ก่อนบันทึก */
+  too_old_skipped: number;
   elapsed_ms: number;
   errors: { where: string; message: string }[];
   /** ข้อสังเกตที่ไม่ใช่ข้อผิดพลาด เช่น ยังมีคิวค้าง */
@@ -176,6 +178,19 @@ function articleRowFromItem(item: FeedItem, source: SourceRow) {
     viaGoogleNews,
   };
 }
+
+/**
+ * วันแรกที่ระบบเก็บข้อมูล — ข่าวที่เผยแพร่ก่อนหน้านี้ถูกตัดทิ้งตั้งแต่ก่อนบันทึก
+ *
+ * ตั้งไว้เพราะฟีดสำนักข่าวและ Google News ยังส่งข่าวเก่าย้อนหลังหลายปีมาปนอยู่เรื่อยๆ
+ * ซึ่งไม่ใช่ขอบเขตที่ระบบนี้เฝ้าระวัง และเปลืองโควตา AI ไปกับข่าวที่ไม่ได้ใช้
+ *
+ * ข่าวที่ **ไม่มีวันเผยแพร่** ยังรับไว้ เพราะฟีดบางเจ้าไม่ส่งวันมาเลย
+ * และมักเป็นข่าวใหม่ที่เพิ่งขึ้นเว็บ — ตัดทิ้งจะเสียของจริง
+ *
+ * ปรับได้ด้วย env `INGEST_MIN_PUBLISHED_DATE` (รูปแบบ YYYY-MM-DD)
+ */
+const MIN_PUBLISHED_DATE = () => optionalEnv('INGEST_MIN_PUBLISHED_DATE', '2026-01-01');
 
 /* ------------------------------------------------------------------ */
 /* STAGE A — poll ฟีด                                                  */
@@ -308,7 +323,14 @@ async function pollFeeds(
     });
 
     // ตัด lead ที่ไม่มีวันใช้งานได้ตั้งแต่ก่อนบันทึก — ไม่งั้นไปกองรอคนยืนยันลิงก์เปล่าๆ
+    const minDate = MIN_PUBLISHED_DATE();
     const keep = unique.filter((r) => {
+      // ข่าวเก่ากว่าวันเริ่มเก็บข้อมูล ตัดทิ้งก่อนเข้าฐานข้อมูล
+      // เช็คก่อนด่านอื่นเพราะใช้กับทุกแหล่ง ไม่ใช่เฉพาะ lead จาก Google News
+      if (r.published_at && r.published_at.slice(0, 10) < minDate) {
+        summary.too_old_skipped++;
+        return false;
+      }
       if (!r.viaGoogleNews) return true;
       const reason = leadRejectReason(r.publisherUrl, coveredDomains);
       if (reason) {
@@ -785,6 +807,7 @@ export async function runIngest(db: SupabaseClient, opts: IngestOptions): Promis
     duplicates_found: 0,
     leads_pending: 0,
     leads_skipped: 0,
+    too_old_skipped: 0,
     elapsed_ms: 0,
     errors: [],
     notes: [],
@@ -930,6 +953,11 @@ export async function runIngest(db: SupabaseClient, opts: IngestOptions): Promis
     summary.stopped_reason = `หยุดเพราะข้อผิดพลาด: ${String(err?.message ?? err)}`;
   }
 
+  if (summary.too_old_skipped > 0) {
+    summary.notes.push(
+      `ตัดข่าวที่เผยแพร่ก่อน ${MIN_PUBLISHED_DATE()} ทิ้ง ${summary.too_old_skipped} รายการ (นอกช่วงที่ระบบเก็บข้อมูล)`
+    );
+  }
   if (summary.leads_skipped > 0) {
     summary.notes.push(
       `ตัด lead ที่ใช้ไม่ได้ทิ้ง ${summary.leads_skipped} รายการ (ไม่ใช่หน้าข่าว หรือมีฟีดตรงอยู่แล้ว)`

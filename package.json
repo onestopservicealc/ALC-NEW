@@ -26,6 +26,7 @@
     "user:role": "tsx scripts/manage-users.ts",
     "check:rls": "tsx scripts/check-rls.ts",
     "leads:cleanup": "tsx scripts/cleanup-leads.ts",
+    "data:cleanup": "tsx scripts/cleanup-old-data.ts",
     "reset:queue": "tsx scripts/reset-queue.ts",
     "e2e": "tsx scripts/e2e.ts",
     "e2e:review": "tsx scripts/e2e-review.ts",
