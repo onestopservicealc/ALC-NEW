@@ -17,8 +17,8 @@ import {
   NEWS_TYPES,
   WEAPONS,
   YES_NO,
-} from '../types/dataDictionary';
-import { THAI_PROVINCES } from '../data/thaiProvinces';
+} from '../types/dataDictionary.js';
+import { THAI_PROVINCES } from '../data/thaiProvinces.js';
 
 /* ------------------------------------------------------------------ */
 /* พื้นฐานการทำความสะอาดข้อความไทย                                     */
