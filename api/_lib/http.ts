@@ -60,7 +60,20 @@ export interface FetchTextResult {
 
 export async function fetchText(
   url: string,
-  opts: { timeoutMs?: number; accept?: string } = {}
+  opts: {
+    timeoutMs?: number;
+    accept?: string;
+    /**
+     * ข้ามคิวจำกัดอัตราต่อโดเมน
+     *
+     * คิวนี้รอ "นอก" AbortController จึงไม่ถูกนับใน timeoutMs เลย
+     * งานเบื้องหลังรอได้ แต่เส้นทางที่มีคนกดปุ่มรออยู่ไม่ควรไปต่อท้ายคิว
+     * แล้วเลยเพดานเวลาของ serverless จนกลายเป็น 500 เปล่า
+     */
+    skipThrottle?: boolean;
+    /** เพดานขนาด body กันหน้าที่ยัดข้อมูลก้อนใหญ่มาให้ */
+    maxBytes?: number;
+  } = {}
 ): Promise<FetchTextResult> {
   const timeoutMs = opts.timeoutMs ?? 15000;
   let host = '';
@@ -70,7 +83,7 @@ export async function fetchText(
     return { ok: false, status: 0, body: '', finalUrl: url, error: 'URL ไม่ถูกต้อง' };
   }
 
-  await throttle(host);
+  if (!opts.skipThrottle) await throttle(host);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -84,7 +97,27 @@ export async function fetchText(
         'Accept-Language': 'th,en;q=0.8',
       },
     });
+    const declared = Number(res.headers.get('content-length'));
+    if (opts.maxBytes && Number.isFinite(declared) && declared > opts.maxBytes) {
+      return {
+        ok: false,
+        status: res.status,
+        body: '',
+        finalUrl: res.url || url,
+        error: `หน้าเว็บใหญ่เกินกำหนด (${declared} ไบต์)`,
+      };
+    }
+
     const body = await res.text();
+    if (opts.maxBytes && body.length > opts.maxBytes) {
+      return {
+        ok: false,
+        status: res.status,
+        body: '',
+        finalUrl: res.url || url,
+        error: `หน้าเว็บใหญ่เกินกำหนด (${body.length} ไบต์)`,
+      };
+    }
     return { ok: res.ok, status: res.status, body, finalUrl: res.url || url };
   } catch (err: any) {
     return {

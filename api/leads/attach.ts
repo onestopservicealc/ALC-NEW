@@ -23,7 +23,17 @@ import { linkArticleToUrl } from '../_lib/leads';
 import { fail, methodNotAllowed } from '../_lib/respond';
 import { supabaseAdmin } from '../_lib/supabaseAdmin';
 
-export const config = { maxDuration: 30 };
+// 60 วินาที ไม่ใช่ 30 — ค่านี้ในไฟล์ชนะค่าใน vercel.json เสมอ
+// (@vercel/node ส่ง staticConfig.maxDuration เข้า Lambda โดยตรง)
+// เดิมตั้ง 30 ไว้ตอนที่ endpoint นี้ยังไม่ต้องออกไปคุยกับ Google ตอนนี้ต้องเผื่อให้พอ
+export const config = { maxDuration: 60 };
+
+/**
+ * เส้นตายรวมของขั้นตอนถอดลิงก์ ครอบทุกอย่างรวมถึงเวลารอคิวจำกัดอัตรา
+ * ปกติถอดเสร็จใน ~350 ms ถ้าเกิน 10 วินาทีแปลว่าผิดปกติแล้ว
+ * ถอยไปให้เจ้าหน้าที่วาง URL เองเร็วกว่าปล่อยให้คำขอตายคาแพลตฟอร์ม
+ */
+const RESOLVE_DEADLINE_MS = 10000;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
@@ -59,10 +69,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       // ถอดอัตโนมัติพังได้เสมอเพราะพึ่ง endpoint ภายในของ Google
       // ห้ามให้พังแบบ 500 เด็ดขาด — ต้องกลายเป็นทางถอยให้คนวาง URL เองทุกกรณี
-      const resolved = await resolveGoogleNewsUrl(lead.gnews_link).catch((err) => ({
-        url: null as string | null,
-        error: `เรียกตัวถอดลิงก์ไม่สำเร็จ: ${String((err as Error)?.message ?? err).slice(0, 200)}`,
-      }));
+      //
+      // เส้นตายครอบทั้งขั้นตอน ไม่ใช่แค่ต่อคำขอ: timeout ข้างในครอบเฉพาะตัว fetch
+      // แต่การรอคิวจำกัดอัตราต่อโดเมนใน http.ts เกิด "ก่อน" AbortController จึงไม่ถูกนับ
+      // วัดแล้วคำขอที่ 20 บนโดเมนเดียวกันรอถึง 6.6 วินาทีก่อนเริ่มยิงด้วยซ้ำ
+      // ถ้าไม่มีเส้นตายตรงนี้ คำขอจะเลยเพดานเวลาของ Vercel แล้วกลายเป็น 500 เปล่าที่อ่านไม่รู้เรื่อง
+      const resolved = await Promise.race([
+        resolveGoogleNewsUrl(lead.gnews_link).catch((err) => ({
+          url: null as string | null,
+          error: `เรียกตัวถอดลิงก์ไม่สำเร็จ: ${String((err as Error)?.message ?? err).slice(0, 200)}`,
+        })),
+        new Promise<{ url: string | null; error: string }>((resolve) =>
+          setTimeout(
+            () => resolve({ url: null, error: `ถอดลิงก์เกินเวลาที่กำหนด (${RESOLVE_DEADLINE_MS}ms)` }),
+            RESOLVE_DEADLINE_MS
+          )
+        ),
+      ]);
 
       if (!resolved.url) {
         // log ไว้ให้เห็นใน Vercel logs — ไม่งั้นเวลามันพังจะไล่หาสาเหตุไม่ได้เลย

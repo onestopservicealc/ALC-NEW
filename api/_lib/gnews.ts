@@ -100,20 +100,49 @@ export async function resolveGoogleNewsUrl(
  */
 const DEFAULT_TIMEOUT_MS = 6000;
 
+/**
+ * เพดานขนาดหน้าที่ยอมโหลด
+ *
+ * หน้าบทความปกติ ~580 KB แต่หน้าที่ Google ส่งให้ตอนบล็อกคือ ~1.86 MB
+ * ไม่จำกัดขนาดไว้ = ยอมดูดข้อมูลก้อนใหญ่เข้าหน่วยความจำฟรีๆ ทั้งที่ต้องการแค่สองแอตทริบิวต์
+ */
+const MAX_PAGE_BYTES = 1_500_000;
+
 async function resolve(link: string, timeoutMs: number): Promise<ResolveResult> {
   const id = articleId(link);
   if (!id) return { url: null, error: 'ลิงก์นี้ไม่ใช่รูปแบบ news.google.com/articles ที่ถอดได้' };
 
   /* ---- 1. ขอ signature + timestamp จากหน้า article ---- */
-  const page = await fetchText(`https://news.google.com/rss/articles/${id}`, { timeoutMs });
+  // skipThrottle: เส้นทางนี้มีคนกดปุ่มรออยู่ ห้ามให้ไปต่อคิวหลังงานดึงข่าวเบื้องหลัง
+  // การรอคิวเกิดก่อน AbortController จึงไม่ถูกนับใน timeout — วัดแล้วคำขอที่ 20 รอ 6.6 วินาที
+  const page = await fetchText(`https://news.google.com/rss/articles/${id}`, {
+    timeoutMs,
+    skipThrottle: true,
+    maxBytes: MAX_PAGE_BYTES,
+  });
   if (!page.ok) {
     return { url: null, error: `เปิดหน้า Google News ไม่สำเร็จ (${page.error ?? page.status})` };
+  }
+
+  // Google ไม่ตอบ 403/429 เมื่อมองว่าเป็นบอท แต่ redirect ไปหน้าแรกแล้วส่ง 200 พร้อม HTML 1.86 MB
+  // โค้ดจึงคิดว่าสำเร็จ แล้วไปสรุปผิดว่า "Google เปลี่ยนรูปแบบ" ทั้งที่ความจริงคือโดนบล็อก
+  // ต้องแยกสองกรณีนี้ให้ออก ไม่งั้นไล่หาสาเหตุจาก log ไม่ได้เลย
+  if (!/\/rss\/articles\//.test(page.finalUrl)) {
+    return {
+      url: null,
+      error: 'Google เปลี่ยนเส้นทางออกจากหน้าบทความ — น่าจะบล็อกคำขอจากไอพีของศูนย์ข้อมูล',
+    };
   }
 
   const signature = page.body.match(/data-n-a-sg="([^"]+)"/)?.[1];
   const timestamp = page.body.match(/data-n-a-ts="([^"]+)"/)?.[1];
   // ปกติ id ในหน้าตรงกับใน URL แต่ Google เคยส่งคนละตัว จึงเชื่อค่าในหน้าก่อน
   const innerId = page.body.match(/data-n-a-id="([^"]+)"/)?.[1] ?? id;
+
+  const ts = Number(timestamp);
+  if (signature && timestamp && !Number.isFinite(ts)) {
+    return { url: null, error: 'timestamp ในหน้า Google News ไม่ใช่ตัวเลข' };
+  }
 
   if (!signature || !timestamp) {
     // สัญญาณว่า Google เปลี่ยนรูปแบบอีกแล้ว — ต้องกลับมาแก้ไฟล์นี้
@@ -131,7 +160,7 @@ async function resolve(link: string, timeoutMs: number): Promise<ResolveResult> 
         'User-Agent': USER_AGENT(),
         'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
       },
-      body: new URLSearchParams({ 'f.req': buildRequest(innerId, Number(timestamp), signature) }),
+      body: new URLSearchParams({ 'f.req': buildRequest(innerId, ts, signature) }),
     });
 
     if (!res.ok) return { url: null, error: `Google News ตอบกลับ ${res.status}` };

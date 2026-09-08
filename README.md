@@ -112,6 +112,10 @@ vercel --prod
 
 `vercel.json` ตั้งค่าไว้แล้ว: framework `vite`, output `dist`, `maxDuration: 300` สำหรับ `/api/**`
 
+> ⚠️ ค่านี้ใน `vercel.json` **ไม่ชนะ** `export const config = { maxDuration: N }` ที่เขียนไว้ในไฟล์
+> `@vercel/node` ส่งค่าจากในไฟล์เข้า Lambda โดยตรง ดังนั้นเพดานเวลาจริงของแต่ละ endpoint
+> คือค่าที่เขียนไว้หัวไฟล์นั้นๆ ไม่ใช่ 300 — เช็คที่ไฟล์เสมอเวลาไล่ปัญหาเรื่องเวลา
+
 ### 5. รันในเครื่อง
 
 ```bash
