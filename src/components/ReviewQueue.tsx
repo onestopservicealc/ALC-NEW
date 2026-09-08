@@ -797,6 +797,8 @@ const NeedsUrlPanel: React.FC<{
   const [resolving, setResolving] = useState(false);
   /** เหตุผลที่ถอดไม่ได้ — ต้องบอกผู้ใช้ ไม่ใช่โยนช่องกรอกใส่หน้าเฉยๆ */
   const [resolveReason, setResolveReason] = useState<string | null>(null);
+  /** ผลการไล่ตรวจทีละขั้น ใช้ตอนถอดลิงก์พังแล้วต้องรู้ว่าพังตรงไหน */
+  const [diag, setDiag] = useState<string[] | null>(null);
   /**
    * นับวินาทีเฉพาะทางเนื้อข่าว ซึ่งเป็นทางเดียวที่ยังต้องยืนรอ AI (5-15 วินาที)
    * ทาง URL ไม่ต้องรอเพราะสกัดเบื้องหลัง
@@ -1155,6 +1157,40 @@ const NeedsUrlPanel: React.FC<{
   };
 
   /**
+   * ไล่ตรวจทีละขั้นว่าเซิร์ฟเวอร์พังตรงไหน
+   *
+   * มีไว้เพราะเมื่อฟังก์ชันตายบนแพลตฟอร์ม เราได้แค่ 500 เปล่าที่ไม่บอกอะไร
+   * และคนใช้งานเข้าไปอ่าน log ของ Vercel ไม่ได้ ปุ่มนี้ยิงทีละขั้นแล้วรายงานว่า
+   * ขั้นแรกที่ไม่ตอบกลับคือขั้นไหน ซึ่งชี้จุดพังได้ตรงๆ
+   */
+  const runDiagnostics = async () => {
+    const steps = [
+      [1, 'ฟังก์ชันบูต + ยืนยันตัวตน'],
+      [2, 'โหลดโมดูลถอดลิงก์'],
+      [3, 'ต่อเน็ตออกนอก (example.com)'],
+      [4, 'ต่อไปที่ news.google.com'],
+    ] as const;
+
+    setDiag(['กำลังตรวจ...']);
+    const lines: string[] = [];
+    for (const [n, label] of steps) {
+      try {
+        const r = await callApi<Record<string, unknown>>('/api/leads/resolve', { step: n });
+        const extra = [r.status, r.bytes ? `${r.bytes} ไบต์` : null, r.ms ? `${r.ms}ms` : null]
+          .filter(Boolean)
+          .join(' · ');
+        lines.push(`✓ ${n}. ${label}${extra ? ` — ${extra}` : ''}`);
+      } catch (err: any) {
+        lines.push(`✕ ${n}. ${label} — ${String(err?.message ?? err)}`);
+        lines.push('↑ ขั้นนี้คือจุดที่พัง');
+        break;
+      }
+      setDiag([...lines]);
+    }
+    setDiag(lines);
+  };
+
+  /**
    * ปุ่มหลัก — ยืนยันข่าวนี้โดยไม่ต้องกรอกอะไรเลย
    *
    * URL ถูกถอดไว้ล่วงหน้าตั้งแต่ข่าวขึ้นจอแล้ว ตรงนี้จึงแค่บันทึก ไม่ต้องรอเน็ต
@@ -1498,12 +1534,25 @@ const NeedsUrlPanel: React.FC<{
                 </a>{' '}
                 ไว้บนแถบบุ๊กมาร์ก แล้วกดครั้งเดียวจากหน้าข่าวได้เลย ไม่ต้องคัดลอก-สลับแท็บ-วาง
               </p>
-              <button
-                onClick={() => setManualUrl(false)}
-                className="text-[13px] font-mono text-neutral-600 hover:text-neutral-700"
-              >
-                ← ลองถอดลิงก์อัตโนมัติอีกครั้ง
-              </button>
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={() => setManualUrl(false)}
+                  className="text-[13px] font-mono text-neutral-600 hover:text-neutral-700"
+                >
+                  ← ลองถอดลิงก์อัตโนมัติอีกครั้ง
+                </button>
+                <button
+                  onClick={() => void runDiagnostics()}
+                  className="text-[13px] font-mono text-neutral-600 hover:text-neutral-800 border border-neutral-300 px-2.5 py-1 rounded-sm"
+                >
+                  ตรวจหาสาเหตุ
+                </button>
+              </div>
+              {diag && (
+                <pre className="mt-1 bg-neutral-50 border border-neutral-200 rounded-sm p-3 text-[12px] font-mono text-neutral-800 whitespace-pre-wrap break-all">
+                  {diag.join('\n')}
+                </pre>
+              )}
             </div>
           ) : null}
         </div>

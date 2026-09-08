@@ -33,7 +33,58 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     await requireUser(req, 'editor');
 
-    const { articleId } = (req.body ?? {}) as Record<string, string>;
+    const { articleId, step } = (req.body ?? {}) as Record<string, string>;
+
+    /* ---- โหมดตรวจหาสาเหตุ ----
+     *
+     * จำเป็นเพราะเมื่อฟังก์ชันตายบนแพลตฟอร์ม เราจะได้ 500 เปล่าที่ไม่มีข้อความอะไรเลย
+     * และเข้าไปอ่าน log ของ Vercel ไม่ได้ วิธีเดียวที่จะรู้ว่าพังตรงไหนคือ
+     * ทำทีละขั้นแล้วตอบกลับทันที ขั้นแรกที่ไม่ตอบ JSON คือขั้นที่พัง
+     */
+    const stage = Number(step) || 0;
+
+    if (stage === 1) {
+      return res.status(200).json({ ok: true, stage: 1, note: 'ฟังก์ชันบูตและยืนยันตัวตนได้' });
+    }
+
+    if (stage === 2) {
+      const mod = await import('../_lib/gnews');
+      return res.status(200).json({
+        ok: true,
+        stage: 2,
+        note: 'โหลดโมดูลถอดลิงก์ได้',
+        hasFn: typeof mod.resolveGoogleNewsUrl === 'function',
+      });
+    }
+
+    if (stage === 3) {
+      // ต่อเน็ตออกนอกไปเว็บทั่วไป — แยกให้ออกว่า "ออกเน็ตไม่ได้เลย" หรือ "เฉพาะ Google"
+      const started = Date.now();
+      const r = await fetch('https://example.com', { method: 'GET' });
+      return res.status(200).json({
+        ok: true,
+        stage: 3,
+        note: 'ต่อเน็ตออกนอกได้',
+        status: r.status,
+        ms: Date.now() - started,
+      });
+    }
+
+    if (stage === 4) {
+      const started = Date.now();
+      const r = await fetch('https://news.google.com/rss/articles/CBMiK0FVX3lxTE0', { method: 'GET' });
+      const body = await r.text();
+      return res.status(200).json({
+        ok: true,
+        stage: 4,
+        note: 'ต่อไปที่ Google News ได้',
+        status: r.status,
+        finalUrl: r.url.slice(0, 80),
+        bytes: body.length,
+        ms: Date.now() - started,
+      });
+    }
+
     if (!articleId) {
       return res.status(400).json({ error: 'ไม่ได้ระบุรายการที่จะถอดลิงก์' });
     }
