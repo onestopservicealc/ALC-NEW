@@ -144,13 +144,24 @@ async function main() {
 
     /* ---- ทางหลักคือกดยืนยันได้เลย จึงต้องไม่มีช่องกรอกอะไรให้เห็นตั้งแต่แรก ---- */
     const urlBox = page.locator('input[type="url"]');
+    // lead ทดสอบใช้ gnews_link ปลอม การถอดจึงล้มเหลวแน่นอน แล้วต้องถอยไปโหมดวางเอง
+    // (การถอดจริงทดสอบแยกที่ npm run check:gnews เพราะขึ้นกับบริการภายนอก)
     const confirmLeadBtn = page.getByRole('button', { name: /^ยืนยันข่าวนี้$/ });
-    check(await confirmLeadBtn.isVisible(), 'มีปุ่มยืนยันข่าวนี้');
-    check(await confirmLeadBtn.isEnabled(), 'ปุ่มยืนยันกดได้ทันที ไม่ต้องกรอกอะไรก่อน');
-    check(
-      (await urlBox.count()) === 0,
-      'ไม่มีช่องกรอก URL ให้เห็น — เซิร์ฟเวอร์ถอดลิงก์ให้เอง'
-    );
+    const gotConfirmBtn = await confirmLeadBtn.isVisible().catch(() => false);
+    const gotFallback = await urlBox.isVisible().catch(() => false);
+    check(gotConfirmBtn || gotFallback, 'มีปุ่มยืนยันข่าวนี้ หรือถอยไปช่องวาง URL แล้ว');
+
+    if (gotFallback) {
+      check(
+        /ถอดลิงก์อัตโนมัติ.*ไม่สำเร็จ/.test(await bodyText(page)),
+        'ถอดลิงก์ไม่สำเร็จแล้วบอกเหตุผล พร้อมเปิดช่องให้วางเอง ไม่ปล่อยให้ตัน'
+      );
+    } else {
+      check(
+        /กำลังถอดลิงก์|ลิงก์ที่จะบันทึก/.test(await bodyText(page)),
+        'แสดงสถานะการถอดลิงก์ให้เห็นก่อนยืนยัน'
+      );
+    }
 
     const firstTitle = await page.locator('h3').first().innerText();
     check(
@@ -231,17 +242,11 @@ async function main() {
     if (!titleBeforeConfirm.includes('[E2E]')) {
       console.log('  – ข้ามการทดสอบยืนยันลิงก์ (หา lead ทดสอบในคิวไม่เจอ) — ไม่เขียนทับข่าวจริง');
     } else {
-      /* ---- 1. ถอดอัตโนมัติไม่สำเร็จ ต้องเปิดทางถอยให้ ห้ามตัน ---- */
-      await page.getByRole('button', { name: /^ยืนยันข่าวนี้$/ }).click();
-      await page.waitForTimeout(4000);
-
+      /* ---- 1. lead ทดสอบมีลิงก์ปลอม ต้องถอยไปช่องวางเองโดยไม่ตัน ---- */
+      await page.waitForTimeout(5000); // รอการถอดล่วงหน้ารู้ผล
       check(
         await urlBox.isVisible().catch(() => false),
         'ถอดลิงก์ไม่สำเร็จแล้วเปิดช่องให้วาง URL เอง ไม่ปล่อยให้ตัน'
-      );
-      check(
-        /ถอดลิงก์อัตโนมัติ.*ไม่สำเร็จ/.test(await bodyText(page)),
-        'บอกเหตุผลว่าทำไมต้องวาง URL เอง'
       );
       check(
         (await page.locator('h3').first().innerText()) === titleBeforeConfirm,

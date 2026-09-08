@@ -11,29 +11,20 @@
  *
  * ผลพลอยได้ที่สำคัญ: งานไม่หายแม้ผู้ใช้ปิดแท็บทันทีหลังวาง เพราะสถานะอยู่ในฐานข้อมูลแล้ว
  *
- * `url` เป็นตัวเลือก — ถ้าไม่ส่งมา เซิร์ฟเวอร์จะถอดลิงก์ Google News ของ lead เอง
- * (ดู `_lib/gnews.ts`) เจ้าหน้าที่จึงกดยืนยันได้เลยโดยไม่ต้องเปิดข่าวไปคัดลอก URL
- * การถอดพังได้เพราะพึ่ง endpoint ภายในของ Google จึงคืน needsManualUrl ให้หน้าจอถอยไปทางวางเอง
+ * endpoint นี้ **ไม่ต่อเน็ตออกนอกเลย** คุยกับฐานข้อมูลอย่างเดียว จึงเร็วและคาดเดาได้
+ * การถอดลิงก์ Google News ย้ายไปอยู่ที่ `/api/leads/resolve` แยกต่างหาก
+ * เพราะงานนั้นพังได้ (ช้า ถูกบล็อก ฟังก์ชันถูกฆ่า) และเคยลาก endpoint นี้ล้มไปด้วย
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { requireUser } from '../_lib/auth';
-import { resolveGoogleNewsUrl } from '../_lib/gnews';
 import { canonicalizeUrl } from '../_lib/http';
 import { linkArticleToUrl } from '../_lib/leads';
 import { fail, methodNotAllowed } from '../_lib/respond';
 import { supabaseAdmin } from '../_lib/supabaseAdmin';
 
-// 60 วินาที ไม่ใช่ 30 — ค่านี้ในไฟล์ชนะค่าใน vercel.json เสมอ
-// (@vercel/node ส่ง staticConfig.maxDuration เข้า Lambda โดยตรง)
-// เดิมตั้ง 30 ไว้ตอนที่ endpoint นี้ยังไม่ต้องออกไปคุยกับ Google ตอนนี้ต้องเผื่อให้พอ
-export const config = { maxDuration: 60 };
-
-/**
- * เส้นตายรวมของขั้นตอนถอดลิงก์ ครอบทุกอย่างรวมถึงเวลารอคิวจำกัดอัตรา
- * ปกติถอดเสร็จใน ~350 ms ถ้าเกิน 10 วินาทีแปลว่าผิดปกติแล้ว
- * ถอยไปให้เจ้าหน้าที่วาง URL เองเร็วกว่าปล่อยให้คำขอตายคาแพลตฟอร์ม
- */
-const RESOLVE_DEADLINE_MS = 10000;
+// ค่านี้ในไฟล์ชนะค่าใน vercel.json เสมอ (@vercel/node ส่ง staticConfig.maxDuration เข้า Lambda ตรงๆ)
+// 30 วินาทีพอเหลือเฟือ เพราะ endpoint นี้คุยกับฐานข้อมูลอย่างเดียว ไม่ต่อเน็ตออกนอก
+export const config = { maxDuration: 30 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return methodNotAllowed(res, ['POST']);
@@ -52,51 +43,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     /** true เมื่อ URL มาจากการถอดอัตโนมัติ ไม่ใช่เจ้าหน้าที่วางมา */
     let autoResolved = false;
 
-    /* ---- ไม่ได้ส่ง URL มา = ให้เซิร์ฟเวอร์ถอดจากลิงก์ Google News ของ lead เอง ---- */
     if (!url) {
-      const { data: lead } = await db
-        .from('articles')
-        .select('gnews_link')
-        .eq('id', articleId)
-        .maybeSingle();
-
-      if (!lead?.gnews_link) {
-        return res.status(422).json({
-          error: 'รายการนี้ไม่มีลิงก์ Google News ให้ถอด — กรุณาเปิดข่าวแล้ววาง URL เอง',
-          needsManualUrl: true,
-        });
-      }
-
-      // ถอดอัตโนมัติพังได้เสมอเพราะพึ่ง endpoint ภายในของ Google
-      // ห้ามให้พังแบบ 500 เด็ดขาด — ต้องกลายเป็นทางถอยให้คนวาง URL เองทุกกรณี
-      //
-      // เส้นตายครอบทั้งขั้นตอน ไม่ใช่แค่ต่อคำขอ: timeout ข้างในครอบเฉพาะตัว fetch
-      // แต่การรอคิวจำกัดอัตราต่อโดเมนใน http.ts เกิด "ก่อน" AbortController จึงไม่ถูกนับ
-      // วัดแล้วคำขอที่ 20 บนโดเมนเดียวกันรอถึง 6.6 วินาทีก่อนเริ่มยิงด้วยซ้ำ
-      // ถ้าไม่มีเส้นตายตรงนี้ คำขอจะเลยเพดานเวลาของ Vercel แล้วกลายเป็น 500 เปล่าที่อ่านไม่รู้เรื่อง
-      const resolved = await Promise.race([
-        resolveGoogleNewsUrl(lead.gnews_link).catch((err) => ({
-          url: null as string | null,
-          error: `เรียกตัวถอดลิงก์ไม่สำเร็จ: ${String((err as Error)?.message ?? err).slice(0, 200)}`,
-        })),
-        new Promise<{ url: string | null; error: string }>((resolve) =>
-          setTimeout(
-            () => resolve({ url: null, error: `ถอดลิงก์เกินเวลาที่กำหนด (${RESOLVE_DEADLINE_MS}ms)` }),
-            RESOLVE_DEADLINE_MS
-          )
-        ),
-      ]);
-
-      if (!resolved.url) {
-        // log ไว้ให้เห็นใน Vercel logs — ไม่งั้นเวลามันพังจะไล่หาสาเหตุไม่ได้เลย
-        console.warn('[attach] ถอดลิงก์ไม่สำเร็จ', { articleId, reason: resolved.error });
-        return res.status(422).json({
-          error: `ถอดลิงก์อัตโนมัติไม่สำเร็จ (${resolved.error}) — กรุณาเปิดข่าวแล้ววาง URL เอง`,
-          needsManualUrl: true,
-        });
-      }
-      url = resolved.url;
-      autoResolved = true;
+      // attach ไม่ถอดลิงก์เองอีกแล้ว — หน้าจอต้องเรียก /api/leads/resolve มาก่อน
+      // เหตุผล: การคุยกับ Google เป็นงานที่พังได้ ห้ามให้มันลากเส้นทางบันทึกข้อมูลล้มไปด้วย
+      return res.status(422).json({
+        error: 'ไม่ได้ส่ง URL มา — ถอดลิงก์ที่ /api/leads/resolve ก่อน หรือให้เจ้าหน้าที่วาง URL เอง',
+        needsManualUrl: true,
+      });
     }
 
     if (!/^https?:\/\//i.test(url)) {

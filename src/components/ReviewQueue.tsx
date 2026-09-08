@@ -566,6 +566,13 @@ const useElapsed = (active: boolean): number => {
   return seconds;
 };
 
+interface ResolveResponse {
+  /** URL ต้นทางที่ถอดได้ — null แปลว่าถอดไม่ได้ ซึ่งเป็นผลลัพธ์ปกติ ไม่ใช่ error */
+  url: string | null;
+  reason?: string | null;
+  cached?: boolean;
+}
+
 interface AttachResponse {
   duplicate?: boolean;
   articleId?: string;
@@ -781,6 +788,16 @@ const NeedsUrlPanel: React.FC<{
    */
   const [manualUrl, setManualUrl] = useState(false);
   /**
+   * ผลการถอดลิงก์ของข่าวที่แสดงอยู่ ทำล่วงหน้าตั้งแต่ข่าวขึ้นจอ
+   *
+   * ทำไมต้องล่วงหน้า: เจ้าหน้าที่ใช้เวลาอ่านพาดหัวอยู่แล้ว เอาช่วงนั้นมาถอดลิงก์เสีย
+   * พอกดปุ่มจึงบันทึกได้ทันทีโดยไม่ต้องรอ และได้เห็น URL ก่อนยืนยันว่าถูกข่าวจริง
+   */
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
+  const [resolving, setResolving] = useState(false);
+  /** เหตุผลที่ถอดไม่ได้ — ต้องบอกผู้ใช้ ไม่ใช่โยนช่องกรอกใส่หน้าเฉยๆ */
+  const [resolveReason, setResolveReason] = useState<string | null>(null);
+  /**
    * นับวินาทีเฉพาะทางเนื้อข่าว ซึ่งเป็นทางเดียวที่ยังต้องยืนรอ AI (5-15 วินาที)
    * ทาง URL ไม่ต้องรอเพราะสกัดเบื้องหลัง
    */
@@ -842,6 +859,8 @@ const NeedsUrlPanel: React.FC<{
     setTextValue('');
     // ข่าวใหม่ต้องได้ลองถอดอัตโนมัติเสมอ ไม่ใช่ติดโหมดวางเองมาจากข่าวก่อนหน้า
     setManualUrl(false);
+    setResolvedUrl(null);
+    setResolveReason(null);
   }, [current?.id]);
 
   // โฟกัสช่องที่ต้องใช้ทันทีที่เปลี่ยนข่าว ผู้ใช้จึงกด Cmd+V ได้เลยหลังสลับแท็บกลับมา
@@ -853,6 +872,56 @@ const NeedsUrlPanel: React.FC<{
     if (blockedUrl) textInput.current?.focus();
     else if (manualUrl) urlInput.current?.focus();
   }, [current?.id, busy, blockedUrl, manualUrl]);
+
+  /**
+   * ถอดลิงก์ล่วงหน้าทันทีที่ข่าวขึ้นจอ
+   *
+   * แยกไปเรียก /api/leads/resolve ไม่ใช่ทำตอนกดปุ่ม เพราะ 2 เหตุผล:
+   *   1. เจ้าหน้าที่ได้เห็น URL ก่อนกดยืนยัน จึงตรวจได้ว่าเป็นข่าวเดียวกันจริง
+   *   2. ถ้าถอดไม่ได้ หน้าจอเปิดช่องให้วางเองตั้งแต่ยังไม่กด ไม่ใช่กดแล้วค่อยเจอปัญหา
+   *
+   * endpoint นั้นอ่านอย่างเดียว เรียกซ้ำได้ ถ้าล้มก็แค่ถอยไปทางวางเอง ไม่กระทบข้อมูล
+   */
+  useEffect(() => {
+    if (!current || blockedUrl) return;
+    let cancelled = false;
+    const leadId = current.id;
+
+    setResolving(true);
+
+    // หน่วงสั้นๆ ก่อนยิง — เจ้าหน้าที่กด "ข้าม" รัวๆ ได้ ถ้ายิงทุกข่าวที่ผ่านตา
+    // จะกลายเป็นการถล่ม Google โดยไม่จำเป็นและเพิ่มโอกาสโดนบล็อก
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const r = await callApi<ResolveResponse>('/api/leads/resolve', { articleId: leadId });
+          if (cancelled) return;
+          if (r.url) {
+            setResolvedUrl(r.url);
+          } else {
+            setResolvedUrl(null);
+            setResolveReason(r.reason ?? 'ถอดลิงก์ไม่สำเร็จ');
+            setManualUrl(true);
+          }
+        } catch (err: any) {
+          // ถอดไม่ได้ไม่ใช่เรื่องคอขาดบาดตาย — เปิดทางให้คนทำต่อ แต่ต้องบอกด้วยว่าเพราะอะไร
+          if (!cancelled) {
+            setResolvedUrl(null);
+            setResolveReason(String(err?.message ?? 'ติดต่อเซิร์ฟเวอร์ไม่สำเร็จ'));
+            setManualUrl(true);
+          }
+        } finally {
+          if (!cancelled) setResolving(false);
+        }
+      })();
+    }, 400);
+
+    // ข่าวเปลี่ยนก่อนผลกลับมา = ทิ้งผลเก่า ห้ามเอา URL ของข่าวก่อนหน้ามาแปะข่าวใหม่
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [current?.id, blockedUrl]);
 
   const updateJob = (articleId: string, patch: Partial<BackgroundJob>) => {
     if (!aliveRef.current) return;
@@ -933,17 +1002,15 @@ const NeedsUrlPanel: React.FC<{
   /**
    * ยืนยัน lead ปัจจุบัน แล้วไปข่าวถัดไปทันที
    *
-   * `value` = null คือทางหลัก — กดปุ่มเดียวจบ เซิร์ฟเวอร์ถอดลิงก์ Google News ให้เอง
-   * `value` = string คือทางถอย ใช้เมื่อถอดอัตโนมัติไม่สำเร็จแล้วเจ้าหน้าที่หา URL มาเอง
-   *
-   * ไม่ว่าทางไหนก็รอแค่การเขียนฐานข้อมูล (~200 ms บวกเวลาถอดลิงก์อีกราว 300 ms)
-   * การสกัดของ AI (5-15 วินาที) ทำเบื้องหลัง ผู้ใช้ไม่ต้องยืนรอ
+   * URL มาได้ 2 ทาง: ถอดล่วงหน้าไว้แล้ว (ทางหลัก) หรือเจ้าหน้าที่วางเอง (ทางถอย)
+   * ทั้งสองทางมาถึงตรงนี้พร้อม URL แล้วเสมอ — endpoint นี้จึงแค่เขียนฐานข้อมูล ~200 ms
+   * ไม่ต่อเน็ตออกนอก ไม่มีทางค้าง การสกัดของ AI (5-15 วินาที) ทำเบื้องหลัง
    */
-  const submitUrl = async (value: string | null) => {
+  const submitUrl = async (value: string) => {
     if (!current || busy) return;
 
-    const trimmed = value?.trim() ?? null;
-    if (trimmed !== null) {
+    const trimmed = value.trim();
+    {
       if (!trimmed) return;
       // ด่านตรวจอยู่ตรงนี้ที่เดียว ทั้งการวาง การกด Enter และการกดปุ่มยืนยันจึงเจอเกณฑ์เดียวกัน
       if (!/^https?:\/\//i.test(trimmed)) {
@@ -968,8 +1035,7 @@ const NeedsUrlPanel: React.FC<{
     setBusy(true);
     try {
       const attached = await callApi<AttachResponse>('/api/leads/attach', {
-        // ไม่ส่ง url ไปเลยเมื่อให้เซิร์ฟเวอร์ถอดเอง
-        ...(trimmed !== null ? { url: trimmed } : {}),
+        url: trimmed,
         articleId: lead.id,
       });
 
@@ -985,7 +1051,7 @@ const NeedsUrlPanel: React.FC<{
         articleId: attached.articleId ?? lead.id,
         title: lead.title,
         // เชื่อ URL ที่เซิร์ฟเวอร์ตอบกลับก่อน เพราะทางถอดอัตโนมัติมีแต่ฝั่งนั้นที่รู้
-        url: attached.url ?? trimmed ?? '',
+        url: attached.url ?? trimmed,
         newsAgency: lead.news_agency,
         state: 'running',
         message: 'กำลังสกัด',
@@ -1090,13 +1156,22 @@ const NeedsUrlPanel: React.FC<{
 
   /**
    * ปุ่มหลัก — ยืนยันข่าวนี้โดยไม่ต้องกรอกอะไรเลย
-   * เซิร์ฟเวอร์ถอดลิงก์ Google News เป็น URL ต้นทางให้เอง (ดู api/_lib/gnews.ts)
+   *
+   * URL ถูกถอดไว้ล่วงหน้าตั้งแต่ข่าวขึ้นจอแล้ว ตรงนี้จึงแค่บันทึก ไม่ต้องรอเน็ต
+   * ถ้ายังถอดไม่เสร็จก็รอจนกว่าจะรู้ผล ดีกว่าบันทึกมั่วหรือเด้ง error ใส่หน้า
    */
   const confirmLead = async () => {
     if (confirmLock.current || busy || !current) return;
+    if (!resolvedUrl) {
+      onToast(
+        resolving ? 'กำลังถอดลิงก์อยู่ รอสักครู่แล้วกดใหม่' : 'ยังไม่มีลิงก์ให้ยืนยัน',
+        'info'
+      );
+      return;
+    }
     confirmLock.current = true;
     try {
-      await submitUrl(null);
+      await submitUrl(resolvedUrl);
     } finally {
       confirmLock.current = false;
     }
@@ -1248,10 +1323,10 @@ const NeedsUrlPanel: React.FC<{
             {!blockedUrl && !manualUrl && (
               <button
                 onClick={() => void confirmLead()}
-                disabled={!canEdit || busy}
+                disabled={!canEdit || busy || resolving || !resolvedUrl}
                 className="px-6 py-3 rounded-sm bg-neutral-900 hover:bg-black disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-mono font-bold transition-all shadow-md flex items-center gap-2"
               >
-                {busy ? (
+                {busy || resolving ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <CheckCircle2 className="w-3.5 h-3.5" />
@@ -1275,12 +1350,28 @@ const NeedsUrlPanel: React.FC<{
           {/* คำอธิบายทางหลัก — ไม่ต้องมีช่องกรอกใดๆ ให้เห็น */}
           {!blockedUrl && !manualUrl && (
             <div className="space-y-2">
+              {/* โชว์ URL ที่ถอดได้ก่อนกดยืนยัน — เจ้าหน้าที่จะได้ตรวจว่าเป็นข่าวเดียวกันจริง */}
+              {resolving ? (
+                <p className="text-[13px] font-mono text-neutral-600 flex items-center gap-2">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  กำลังถอดลิงก์ต้นทาง...
+                </p>
+              ) : resolvedUrl ? (
+                <p className="text-[13px] font-mono text-neutral-600 break-all">
+                  ลิงก์ที่จะบันทึก:{' '}
+                  <a
+                    href={resolvedUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-red-700/80 hover:text-red-700 underline"
+                  >
+                    {resolvedUrl}
+                  </a>
+                </p>
+              ) : null}
               <p className="text-[13px] text-neutral-600 font-sans">
-                กดยืนยันได้เลย ไม่ต้องเปิดข่าวไปคัดลอกลิงก์ — ระบบถอดลิงก์ Google News
-                เป็น URL ของสำนักข่าวต้นทางให้เอง แล้วไปข่าวถัดไปทันที ไม่ต้องรอ AI
-              </p>
-              <p className="text-[13px] text-neutral-600 font-sans">
-                ถ้าถอดไม่สำเร็จ ระบบจะเปิดช่องให้วาง URL เองเป็นทางถอย
+                ระบบถอดลิงก์ Google News เป็น URL ของสำนักข่าวต้นทางให้ตั้งแต่ข่าวขึ้นจอ
+                กดยืนยันได้เลยไม่ต้องคัดลอกอะไร แล้วไปข่าวถัดไปทันที ไม่ต้องรอ AI
               </p>
             </div>
           )}
@@ -1345,6 +1436,9 @@ const NeedsUrlPanel: React.FC<{
             <div className="space-y-2">
               <p className="text-[13px] font-sans text-red-700">
                 ถอดลิงก์อัตโนมัติของข่าวนี้ไม่สำเร็จ — กดเปิดข่าวต้นทางแล้วเอา URL ของสำนักข่าวมาให้ระบบ
+                {resolveReason && (
+                  <span className="block text-neutral-600 font-mono mt-0.5">สาเหตุ: {resolveReason}</span>
+                )}
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <input
