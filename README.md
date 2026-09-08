@@ -95,7 +95,7 @@ CRON_SECRET=
 ```bash
 npm install
 npm run lint             # typecheck
-npm run check:imports    # import ฝั่งเซิร์ฟเวอร์ต้องลงท้าย .js ครบทุกจุด ไม่งั้นพังบน Vercel
+npm run check:imports    # จำลองโหลดทุก endpoint ด้วยกติกา ESM ของ Node แบบเดียวกับ Vercel
 npm run check:schema     # คอลัมน์ที่โค้ดขอ ต้องมีจริงใน migration + ชื่อบุคคลต้องไม่หลุดเข้า view สาธารณะ
 npm run check:screening  # regression test ตัวคัดกรอง keyword (26 เคส)
 npm run check:feeds      # ยิงฟีดจริงทุกตัว ดูว่ายังใช้ได้
