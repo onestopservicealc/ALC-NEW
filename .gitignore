@@ -1,3 +1,8 @@
 
 # โฟลเดอร์ชั่วคราวของ npm run check:imports
 .import-check-*
+
+# ค่าลับ — ห้ามขึ้น git
+.env
+.env.local
+.env.*.local
