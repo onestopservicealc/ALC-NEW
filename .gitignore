@@ -6,3 +6,6 @@
 .env
 .env.local
 .env.*.local
+
+# ไฟล์ SQL ที่มีค่าลับ สร้างจาก npm run setup:cron
+pg-cron-setup.sql

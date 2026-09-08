@@ -132,24 +132,37 @@ npm run dev:api   # vercel dev — ได้ทั้งหน้าเว็บ
 
 ---
 
-## Cron: ทำไมถึงเป็น 8 รายการ
+## Cron: ตั้งเวลาที่ Supabase ไม่ใช่ Vercel
 
-Vercel **Hobby** จำกัดให้ cron แต่ละ expression รัน **วันละครั้ง** แต่ให้ได้ถึง **100 jobs ต่อโปรเจกต์**
-`vercel.json` จึงลงทะเบียน 8 รายการที่ชั่วโมงต่างกัน (`0 0`, `0 3`, … `0 21`) = ดึงข่าวทุก ~3 ชั่วโมง
-ถูกกติกา Hobby ทุกประการโดยไม่ต้องอัปเกรด
+> ⚠️ **Vercel Cron ใน `vercel.json` ไม่เคยทำงานจริงในโปรเจกต์นี้**
+> ตรวจฐานข้อมูลเมื่อ 2026-09-08 พบว่า `ingest_runs` ทั้งหมด 14 รอบเป็น `manual` ล้วน
+> ไม่มี `cron` แม้แต่รอบเดียว และ Cron Jobs ไม่ปรากฏใน dashboard ของ Vercel เลย
+> สาเหตุคือ `vercel.json` ประกาศไว้ 8 รายการซึ่งเกินโควตาของแพลนที่ใช้อยู่ Vercel จึงไม่ลงทะเบียนให้
+> (เอกสารเดิมตรงนี้เขียนว่า Hobby ได้ถึง 100 รายการ ซึ่งไม่ตรงกับความจริงและทำให้เข้าใจผิดมานาน)
 
-- เวลาเป็น **UTC** (ไทย = UTC+7) และ Vercel อาจเรียกคลาดได้ **±59 นาที**
-- แต่ละ invocation มีงบเวลา 300 วินาที ซึ่งเป็นค่าสูงสุดของ Hobby
-- ต้องการถี่กว่านี้โดยไม่อัปเกรด: ใช้ `pg_cron` + `pg_net` บน Supabase ยิงมาที่ `/api/cron/tick` ทุก 20 นาที
+ระบบจึงย้ายไปตั้งเวลาที่ Supabase ด้วย `pg_cron` + `pg_net` ซึ่งไม่ขึ้นกับแพลนของ Vercel
+ตั้งได้ถี่ถึงทุก 20 นาที และดูประวัติการรันได้ในฐานข้อมูลตัวเอง
 
-  ```sql
-  select cron.schedule('ingest-tick', '*/20 * * * *', $$
-    select net.http_post(
-      url     := 'https://<your-app>.vercel.app/api/cron/tick',
-      headers := '{"Authorization": "Bearer <CRON_SECRET>"}'::jsonb
-    );
-  $$);
-  ```
+```bash
+npm run setup:cron -- https://ชื่อแอปของคุณ.vercel.app
+```
+
+สคริปต์อ่าน `CRON_SECRET` จาก `.env.local` แล้วสร้าง `pg-cron-setup.sql` (git มองข้ามไว้)
+เอาไปวางใน **Supabase → SQL Editor → Run** ครั้งเดียวจบ
+
+ตรวจว่าทำงานอยู่ไหม:
+
+```sql
+select start_time, status, return_message
+from cron.job_run_details
+where jobid = (select jobid from cron.job where jobname = 'ingest-tick')
+order by start_time desc limit 10;
+```
+
+หรือดูในหน้า **แหล่งข่าว** ของแอป ซึ่งเตือนเมื่อไม่มีการดึงสำเร็จเกิน 6 ชั่วโมง
+
+- แต่ละ invocation มีงบเวลา 300 วินาที
+- ถ้าย้ายไปแพลนที่รองรับ Vercel Cron ได้ครบ ค่อยเปิด `crons` ใน `vercel.json` กลับมาใช้แทนได้
 
 pipeline ออกแบบให้หยุดกลางคันได้ทุกจุด สถานะทั้งหมดอยู่ใน DB รอบถัดไปจึงทำงานต่อจากเดิมได้เอง
 

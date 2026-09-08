@@ -12,6 +12,7 @@
     "check:feeds": "tsx scripts/check-feeds.ts",
     "check:imports": "tsx scripts/check-imports.ts",
     "check:gnews": "tsx scripts/check-gnews.ts",
+    "setup:cron": "tsx scripts/setup-pg-cron.ts",
     "verify:gemini": "tsx scripts/verify-gemini.ts",
     "clean": "rm -rf dist .vercel/output",
     "check:screening": "tsx scripts/check-screening.ts",
