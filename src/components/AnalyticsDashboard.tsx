@@ -664,7 +664,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
         </div>
       </div>
 
-      {/* Main Charts Grid 1 */}
+      {/* ── ภาพรวมเหตุการณ์ ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Crime Type Breakdown */}
         <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
@@ -690,57 +690,6 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
             </ResponsiveContainer>
           </div>
         </div>
-
-        {/* Hourly Distribution Timeline */}
-        <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold text-neutral-800 flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5 text-neutral-600" />
-              ช่วงเวลาที่เกิดเหตุ
-            </h3>
-          </div>
-          <div className="h-72 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={hourlyData} margin={{ top: 10, right: 15, left: -20, bottom: 32 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
-                <XAxis dataKey="hour" stroke="#a1a1aa" tick={{ fontSize: 12 }} angle={-35} textAnchor="end" interval={0} />
-                <YAxis stroke="#a1a1aa" tick={{ fontSize: 12 }} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
-                />
-                <Legend wrapperStyle={LEGEND_STYLE} formatter={legendLabel} />
-                {/* สีเดิมของเส้นนี้คือ #e4e4e7 ซึ่งเกือบขาว มองแทบไม่เห็นบนพื้นขาว
-                    เปลี่ยนเป็นเทากลางตามที่กราฟอื่นในไฟล์ใช้กับซีรีส์นับจำนวน */}
-                <Line type="monotone" dataKey="เหตุการณ์" stroke={MUTED} strokeWidth={2} dot={{ r: 3, fill: '#ffffff' }} activeDot={{ r: 5 }} />
-                <Line type="monotone" dataKey="เสียชีวิต" stroke={ACCENT} strokeWidth={2} dot={{ r: 3, fill: '#ffffff' }} activeDot={{ r: 5 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Charts Grid 2 */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Incident Locations */}
-        <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-neutral-800">สถานที่เกิดเหตุ</h3>
-          </div>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart layout="vertical" data={locationData.slice(0, 6)} margin={{ top: 5, right: 20, left: 35, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" horizontal={false} />
-                <XAxis type="number" stroke="#a1a1aa" tick={{ fontSize: 12 }} allowDecimals={false} />
-                <YAxis dataKey="name" type="category" stroke="#a1a1aa" tick={{ fontSize: 12 }} width={90} />
-                <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
-                />
-                <Bar dataKey="value" name="จำนวน" fill="#52525b" radius={[0, 2, 2, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
         {/* Weapons Used */}
         <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
           <div className="flex items-center justify-between mb-3">
@@ -772,70 +721,63 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
             </ResponsiveContainer>
           </div>
         </div>
-
-        {/* Beverage Types */}
-        <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-semibold text-neutral-800">ประเภทเครื่องดื่ม</h3>
-          </div>
-          <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={beverageData.length > 0 ? beverageData : [{ name: 'ไม่มีข้อมูล', value: 1 }]}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={75}
-                  innerRadius={35}
-                  paddingAngle={3}
-                  label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
-                  labelLine={false}
-                >
-                  {beverageData.map((_, index) => (
-                    <Cell key={`cell-bev-${index}`} fill={['#d4d4d8', '#a1a1aa', '#71717a', '#52525b'][index % 4]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
       </div>
 
-      {/* Main Charts Grid 3: Demographics & Province Hotspots */}
+      {/* ── เกิดเมื่อไร ── */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Age Demographics Comparison */}
+        {/* Hourly Distribution Timeline */}
         <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold text-neutral-800 flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5 text-neutral-600" />
-              ช่วงอายุ: ผู้ก่อเหตุเทียบผู้เสียหาย
+              <Clock className="w-3.5 h-3.5 text-neutral-600" />
+              ช่วงเวลาที่เกิดเหตุ
             </h3>
           </div>
           <div className="h-72 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={ageDemographics} margin={{ top: 10, right: 15, left: -20, bottom: 24 }}>
+              <LineChart data={hourlyData} margin={{ top: 10, right: 15, left: -20, bottom: 32 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
-                <XAxis dataKey="group" stroke="#a1a1aa" tick={{ fontSize: 12 }} angle={-20} textAnchor="end" interval={0} />
+                <XAxis dataKey="hour" stroke="#a1a1aa" tick={{ fontSize: 12 }} angle={-35} textAnchor="end" interval={0} />
                 <YAxis stroke="#a1a1aa" tick={{ fontSize: 12 }} allowDecimals={false} />
                 <Tooltip
                   contentStyle={TOOLTIP_STYLE}
                 />
                 <Legend wrapperStyle={LEGEND_STYLE} formatter={legendLabel} />
-                <Bar dataKey="ผู้ก่อเหตุ" fill="#d92d20" radius={[2, 2, 0, 0]} />
-                <Bar dataKey="ผู้เสียหาย" fill="#18181b" radius={[2, 2, 0, 0]} />
+                {/* สีเดิมของเส้นนี้คือ #e4e4e7 ซึ่งเกือบขาว มองแทบไม่เห็นบนพื้นขาว
+                    เปลี่ยนเป็นเทากลางตามที่กราฟอื่นในไฟล์ใช้กับซีรีส์นับจำนวน */}
+                <Line type="monotone" dataKey="เหตุการณ์" stroke={MUTED} strokeWidth={2} dot={{ r: 3, fill: '#ffffff' }} activeDot={{ r: 5 }} />
+                <Line type="monotone" dataKey="เสียชีวิต" stroke={ACCENT} strokeWidth={2} dot={{ r: 3, fill: '#ffffff' }} activeDot={{ r: 5 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-neutral-800 flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-neutral-600" />
+              การกระจายตามวันในสัปดาห์
+            </h3>
+          </div>
+          <div className="h-56 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={weekdayData} margin={{ top: 10, right: 15, left: -20, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
+                <XAxis dataKey="name" stroke="#a1a1aa" tick={{ fontSize: 12 }} />
+                <YAxis stroke="#a1a1aa" tick={{ fontSize: 12 }} allowDecimals={false} />
+                <Tooltip
+                  contentStyle={TOOLTIP_STYLE}
+                />
+                <Legend wrapperStyle={LEGEND_STYLE} formatter={legendLabel} />
+                <Bar dataKey="เหตุการณ์" fill="#71717a" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="เสียชีวิต" fill="#d92d20" radius={[2, 2, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
         </div>
+      </div>
 
-        {/* แผนที่ความหนาแน่นรายจังหวัด — กินเต็มแถวเพราะแผนที่ไทยเป็นแนวตั้ง
-            ถ้าอยู่ในคอลัมน์ครึ่งเดียวจะได้แผนที่แคบจนดูไม่รู้เรื่อง */}
-        <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md lg:col-span-2">
+      {/* ── เกิดที่ไหน ── */}
+        <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
             <h3 className="text-sm font-semibold text-neutral-800 flex items-center gap-1.5">
               <MapPin className="w-3.5 h-3.5 text-neutral-600" />
@@ -930,10 +872,55 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
             </div>
           </div>
         </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Incident Locations */}
+        <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-neutral-800">สถานที่เกิดเหตุ</h3>
+          </div>
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart layout="vertical" data={locationData.slice(0, 6)} margin={{ top: 5, right: 20, left: 35, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" horizontal={false} />
+                <XAxis type="number" stroke="#a1a1aa" tick={{ fontSize: 12 }} allowDecimals={false} />
+                <YAxis dataKey="name" type="category" stroke="#a1a1aa" tick={{ fontSize: 12 }} width={90} />
+                <Tooltip
+                  contentStyle={TOOLTIP_STYLE}
+                />
+                <Bar dataKey="value" name="จำนวน" fill="#52525b" radius={[0, 2, 2, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        {/* Age Demographics Comparison */}
+        <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold text-neutral-800 flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5 text-neutral-600" />
+              ช่วงอายุ: ผู้ก่อเหตุเทียบผู้เสียหาย
+            </h3>
+          </div>
+          <div className="h-72 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={ageDemographics} margin={{ top: 10, right: 15, left: -20, bottom: 24 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
+                <XAxis dataKey="group" stroke="#a1a1aa" tick={{ fontSize: 12 }} angle={-20} textAnchor="end" interval={0} />
+                <YAxis stroke="#a1a1aa" tick={{ fontSize: 12 }} allowDecimals={false} />
+                <Tooltip
+                  contentStyle={TOOLTIP_STYLE}
+                />
+                <Legend wrapperStyle={LEGEND_STYLE} formatter={legendLabel} />
+                <Bar dataKey="ผู้ก่อเหตุ" fill="#d92d20" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="ผู้เสียหาย" fill="#18181b" radius={[2, 2, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </div>
 
-      {/* กราฟเฉพาะมิติแอลกอฮอล์ */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* ── มิติแอลกอฮอล์ ── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
           <div className="flex items-center justify-between mb-1">
             <h3 className="text-sm font-semibold text-neutral-800 flex items-center gap-1.5">
@@ -968,31 +955,73 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
             </ResponsiveContainer>
           </div>
         </div>
-
+        {/* Beverage Types */}
+        <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-neutral-800">ประเภทเครื่องดื่ม</h3>
+          </div>
+          <div className="h-64 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={beverageData.length > 0 ? beverageData : [{ name: 'ไม่มีข้อมูล', value: 1 }]}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={75}
+                  innerRadius={35}
+                  paddingAngle={3}
+                  label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                  labelLine={false}
+                >
+                  {beverageData.map((_, index) => (
+                    <Cell key={`cell-bev-${index}`} fill={['#d4d4d8', '#a1a1aa', '#71717a', '#52525b'][index % 4]} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  contentStyle={TOOLTIP_STYLE}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
         <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold text-neutral-800 flex items-center gap-1.5">
-              <Clock className="w-3.5 h-3.5 text-neutral-600" />
-              การกระจายตามวันในสัปดาห์
+              <Layers className="w-3.5 h-3.5 text-neutral-600" />
+              บทบาทของแอลกอฮอล์ในเหตุการณ์
             </h3>
           </div>
           <div className="h-56 w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={weekdayData} margin={{ top: 10, right: 15, left: -20, bottom: 5 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" vertical={false} />
-                <XAxis dataKey="name" stroke="#a1a1aa" tick={{ fontSize: 12 }} />
-                <YAxis stroke="#a1a1aa" tick={{ fontSize: 12 }} allowDecimals={false} />
+              <PieChart>
+                <Pie
+                  data={alcoholRoleData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={75}
+                  innerRadius={35}
+                  paddingAngle={3}
+                  label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
+                  labelLine={false}
+                >
+                  {alcoholRoleData.map((_, index) => (
+                    <Cell key={`role-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
                 <Tooltip
                   contentStyle={TOOLTIP_STYLE}
                 />
-                <Legend wrapperStyle={LEGEND_STYLE} formatter={legendLabel} />
-                <Bar dataKey="เหตุการณ์" fill="#71717a" radius={[2, 2, 0, 0]} />
-                <Bar dataKey="เสียชีวิต" fill="#d92d20" radius={[2, 2, 0, 0]} />
-              </BarChart>
+              </PieChart>
             </ResponsiveContainer>
           </div>
         </div>
+      </div>
 
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* ประวัติการกระทำความผิดซ้ำ */}
         <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
           <div className="flex items-center justify-between mb-1">
@@ -1031,41 +1060,6 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
             </ResponsiveContainer>
           </div>
         </div>
-
-        <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold text-neutral-800 flex items-center gap-1.5">
-              <Layers className="w-3.5 h-3.5 text-neutral-600" />
-              บทบาทของแอลกอฮอล์ในเหตุการณ์
-            </h3>
-          </div>
-          <div className="h-56 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={alcoholRoleData}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  outerRadius={75}
-                  innerRadius={35}
-                  paddingAngle={3}
-                  label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
-                  labelLine={false}
-                >
-                  {alcoholRoleData.map((_, index) => (
-                    <Cell key={`role-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={TOOLTIP_STYLE}
-                />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
         <div className="bg-white border border-neutral-200 rounded-sm p-5 shadow-md">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold text-neutral-800 flex items-center gap-1.5">
