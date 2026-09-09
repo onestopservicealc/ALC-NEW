@@ -12,3 +12,4 @@ pg-cron-setup.sql
 
 # ไฟล์สำรองก่อนล้างข้อมูล มีข้อมูลจริง ห้ามขึ้น git
 backup-before-cleanup-*.json
+backup-repair-*.json

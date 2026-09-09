@@ -9,7 +9,7 @@
  * ทุกสเตจหยุดได้กลางคัน และรอบถัดไปทำงานต่อจากเดิมได้ เพราะสถานะอยู่ใน DB ทั้งหมด
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { intEnv, optionalEnv } from './env.js';
+import { MIN_INCIDENT_DATE, MIN_PUBLISHED_DATE, intEnv, optionalEnv } from './env.js';
 import { fetchArticleText } from './article.js';
 import { canonicalizeUrl } from './http.js';
 import { DailyQuotaExhaustedError, screenAndExtract } from './gemini.js';
@@ -52,6 +52,8 @@ export interface IngestSummary {
   leads_skipped: number;
   /** ข่าวที่เก่ากว่าวันเริ่มเก็บข้อมูล — ตัดทิ้งตั้งแต่ก่อนบันทึก */
   too_old_skipped: number;
+  /** ข่าวใหม่แต่รายงานเหตุการณ์เก่า — AI สกัดแล้วแต่ไม่บันทึกเป็นเคส */
+  incidents_too_old: number;
   elapsed_ms: number;
   errors: { where: string; message: string }[];
   /** ข้อสังเกตที่ไม่ใช่ข้อผิดพลาด เช่น ยังมีคิวค้าง */
@@ -179,18 +181,6 @@ function articleRowFromItem(item: FeedItem, source: SourceRow) {
   };
 }
 
-/**
- * วันแรกที่ระบบเก็บข้อมูล — ข่าวที่เผยแพร่ก่อนหน้านี้ถูกตัดทิ้งตั้งแต่ก่อนบันทึก
- *
- * ตั้งไว้เพราะฟีดสำนักข่าวและ Google News ยังส่งข่าวเก่าย้อนหลังหลายปีมาปนอยู่เรื่อยๆ
- * ซึ่งไม่ใช่ขอบเขตที่ระบบนี้เฝ้าระวัง และเปลืองโควตา AI ไปกับข่าวที่ไม่ได้ใช้
- *
- * ข่าวที่ **ไม่มีวันเผยแพร่** ยังรับไว้ เพราะฟีดบางเจ้าไม่ส่งวันมาเลย
- * และมักเป็นข่าวใหม่ที่เพิ่งขึ้นเว็บ — ตัดทิ้งจะเสียของจริง
- *
- * ปรับได้ด้วย env `INGEST_MIN_PUBLISHED_DATE` (รูปแบบ YYYY-MM-DD)
- */
-const MIN_PUBLISHED_DATE = () => optionalEnv('INGEST_MIN_PUBLISHED_DATE', '2026-01-01');
 
 /* ------------------------------------------------------------------ */
 /* STAGE A — poll ฟีด                                                  */
@@ -231,15 +221,26 @@ async function pollSitemap(
 
   summary.feeds_polled++;
 
+  // เส้นทางนี้เคยไม่ผ่านด่านวันที่เลย และบันทึก published_at เป็น null ตายตัว
+  // ผลคือตอนสกัดด้วย AI ไม่มีตัวอ้างอิงปี โมเดลจึงเดาปีเองแล้วผิด (วัดได้ 68% ของเคสจาก sitemap)
+  const minDate = MIN_PUBLISHED_DATE();
+  const fresh = result.entries.filter((e) => {
+    if (e.publishedAt && e.publishedAt.slice(0, 10) < minDate) {
+      summary.too_old_skipped++;
+      return false;
+    }
+    return true;
+  });
+
   // title ว่างไว้ก่อน — คอลัมน์เป็น not null จึงใส่ '' แล้วให้สถานะ needs_fetch เป็นตัวบอกว่ายังไม่รู้
-  const payload = result.urls.map((url) => ({
+  const payload = fresh.map((e) => ({
     source_id: source.id,
-    url_key: canonicalizeUrl(url),
-    url,
+    url_key: canonicalizeUrl(e.url),
+    url: e.url,
     gnews_link: null,
     news_agency: source.name,
     title: '',
-    published_at: null,
+    published_at: e.publishedAt,
     rss_summary: null,
     full_text: null,
     full_text_source: null,
@@ -264,7 +265,7 @@ async function pollSitemap(
     .update({
       last_polled_at: now,
       last_ok_at: now,
-      last_item_count: result.urls.length,
+      last_item_count: result.entries.length,
       consecutive_errors: 0,
       last_error: null,
     })
@@ -732,6 +733,7 @@ async function extractOne(
     adjustedFields: report.adjusted,
     model: result.model,
     articleId: article.id,
+    publishedAt: article.published_at,
     fallback: {
       url: article.url,
       newsAgency: article.news_agency,
@@ -757,6 +759,14 @@ async function extractOne(
       })
       .eq('id', article.id);
     summary.leads_pending++;
+    return;
+  }
+
+  // ต้องดักก่อน !persisted.ok ด้านล่าง — ไม่ใช่ความผิดพลาด แต่เป็นการตัดสินใจไม่เก็บ
+  // ถ้าปล่อยตกไปบล็อกนั้น บทความจะถูกตั้งกลับเป็น keyword_pass แล้ววนสกัดซ้ำทุกรอบไม่จบ
+  // (persistIncident ปิดบทความเป็น ai_reject ให้แล้ว)
+  if (persisted.tooOld) {
+    summary.incidents_too_old++;
     return;
   }
 
@@ -808,6 +818,7 @@ export async function runIngest(db: SupabaseClient, opts: IngestOptions): Promis
     leads_pending: 0,
     leads_skipped: 0,
     too_old_skipped: 0,
+    incidents_too_old: 0,
     elapsed_ms: 0,
     errors: [],
     notes: [],
@@ -953,6 +964,11 @@ export async function runIngest(db: SupabaseClient, opts: IngestOptions): Promis
     summary.stopped_reason = `หยุดเพราะข้อผิดพลาด: ${String(err?.message ?? err)}`;
   }
 
+  if (summary.incidents_too_old > 0) {
+    summary.notes.push(
+      `ข่าวใหม่แต่รายงานเหตุการณ์ก่อน ${MIN_INCIDENT_DATE()} จำนวน ${summary.incidents_too_old} รายการ — สกัดแล้วแต่ไม่บันทึกเป็นเคส`
+    );
+  }
   if (summary.too_old_skipped > 0) {
     summary.notes.push(
       `ตัดข่าวที่เผยแพร่ก่อน ${MIN_PUBLISHED_DATE()} ทิ้ง ${summary.too_old_skipped} รายการ (นอกช่วงที่ระบบเก็บข้อมูล)`

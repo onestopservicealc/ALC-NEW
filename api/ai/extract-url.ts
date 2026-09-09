@@ -138,10 +138,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     /* ---- 3. คัดกรอง + สกัด ---- */
+    // วันเผยแพร่เป็นตัวอ้างอิงปีให้ AI — ข่าวไทยมักเขียนแค่ "2 ก.ย." ไม่มีปี
+    // ถ้าไม่ส่งไป โมเดลจะเดาปีเองแล้วผิด (เคยเจอสกัดข่าวเดือน ก.ย. 2569 ออกมาเป็นปี 2567)
+    let publishedAt: string | null = null;
+    if (articleId) {
+      const { data: row } = await db
+        .from('articles')
+        .select('published_at')
+        .eq('id', articleId)
+        .maybeSingle();
+      publishedAt = row?.published_at ?? null;
+    }
+
     const result = await screenAndExtract(fetched.text, {
       url,
       newsAgency: newsAgency || undefined,
       newsTitle: fetched.title ?? undefined,
+      publishedAt: publishedAt ?? undefined,
     });
 
     const inScope =
@@ -172,6 +185,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       url,
       newsAgency: newsAgency || undefined,
       newsTitle: fetched.title ?? undefined,
+      publishedAt,
     });
 
     /* ---- 4. ผูก URL เข้ากับแถว articles (ถ้ามาจาก lead) ---- */
@@ -189,9 +203,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       adjustedFields: report.adjusted,
       model: result.model,
       articleId: linkedArticleId,
+      publishedAt,
       fallback: { url, newsAgency, newsTitle: fetched.title, summary: fetched.text.slice(0, 500) },
       createdBy: user.id,
     });
+
+    // เหตุการณ์เก่าเกินช่วงที่เฝ้าระวัง — ไม่ใช่ความผิดพลาดของระบบ จึงตอบ 200
+    // รูปแบบเดียวกับกรณี "ไม่เข้าขอบเขต" ด้านบน (data: null) หน้าจอจะขึ้น toast แล้วไปข่าวถัดไปเอง
+    if (persisted.tooOld) {
+      return res.status(200).json({
+        success: true,
+        screening: result.screening,
+        data: null,
+        message: persisted.error,
+      });
+    }
 
     if (!persisted.ok) {
       return res.status(500).json({ error: `บันทึกไม่สำเร็จ: ${persisted.error}` });

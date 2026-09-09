@@ -10,10 +10,21 @@
 import { XMLParser } from 'fast-xml-parser';
 import { fetchText } from './http.js';
 
+export interface SitemapEntry {
+  url: string;
+  /**
+   * วันที่จาก <news:publication_date> หรือ <lastmod> — null ถ้า sitemap ไม่ให้มา
+   *
+   * สำคัญกว่าที่คิด: ข่าวจาก sitemap ไม่มีวันเผยแพร่มาก่อน ทำให้ตอนสกัดด้วย AI
+   * ไม่มีตัวอ้างอิงปี โมเดลจึงเดาปีเองแล้วผิดบ่อยมาก (วัดได้ 68% ของเคสจาก sitemap)
+   */
+  publishedAt: string | null;
+}
+
 export interface SitemapResult {
   ok: boolean;
-  /** URL ของหน้าบทความ (กรองด้วย articlePattern แล้ว) */
-  urls: string[];
+  /** หน้าบทความที่กรองด้วย articlePattern แล้ว */
+  entries: SitemapEntry[];
   /** จำนวน <loc> ทั้งหมดก่อนกรอง — ใช้บอกว่า pattern คัดทิ้งไปเท่าไหร่ */
   totalLocs: number;
   status: number;
@@ -36,17 +47,44 @@ function asArray<T>(value: T | T[] | undefined | null): T[] {
   return Array.isArray(value) ? value : [value];
 }
 
+/** ค่าของ node ที่อาจเป็นสตริงตรงๆ หรือถูกห่อเป็น { '#text': ... } */
+function textOf(node: unknown): string {
+  if (typeof node === 'string') return node.trim();
+  if (node && typeof node === 'object' && '#text' in (node as Record<string, unknown>)) {
+    return String((node as Record<string, unknown>)['#text']).trim();
+  }
+  return '';
+}
+
 function locsOf(node: unknown): string[] {
   return asArray(node as Record<string, unknown>[])
-    .map((entry) => {
-      const loc = entry?.loc;
-      if (typeof loc === 'string') return loc.trim();
-      if (loc && typeof loc === 'object' && '#text' in (loc as Record<string, unknown>)) {
-        return String((loc as Record<string, unknown>)['#text']).trim();
-      }
-      return '';
-    })
+    .map((entry) => textOf(entry?.loc))
     .filter(Boolean);
+}
+
+/**
+ * ดึง URL พร้อมวันที่จาก <url> แต่ละก้อน
+ *
+ * เลือก <news:publication_date> ก่อนเพราะเป็นวันเผยแพร่จริง
+ * ส่วน <lastmod> คือวันแก้ไขล่าสุด ซึ่งไม่ตรงเป๊ะ แต่สำหรับข่าวที่เพิ่งขึ้นเว็บใกล้เคียงพอ
+ * และเพียงพอต่อหน้าที่หลักคือบอกปีให้ AI
+ */
+function entriesOf(node: unknown): SitemapEntry[] {
+  return asArray(node as Record<string, any>[])
+    .map((entry) => {
+      const url = textOf(entry?.loc);
+      if (!url) return null;
+      const raw =
+        textOf(entry?.['news:news']?.['news:publication_date']) ||
+        textOf(entry?.news?.publication_date) ||
+        textOf(entry?.lastmod);
+      const d = raw ? new Date(raw) : null;
+      return {
+        url,
+        publishedAt: d && !Number.isNaN(d.getTime()) ? d.toISOString() : null,
+      };
+    })
+    .filter((e): e is SitemapEntry => e !== null);
 }
 
 /**
@@ -67,15 +105,15 @@ function compilePattern(pattern: string | null): RegExp | null {
 async function readSitemap(
   url: string,
   timeoutMs: number
-): Promise<{ urls: string[]; children: string[]; status: number; error?: string }> {
+): Promise<{ entries: SitemapEntry[]; children: string[]; status: number; error?: string }> {
   const res = await fetchText(url, { timeoutMs, accept: 'application/xml,text/xml;q=0.9,*/*;q=0.8' });
   if (!res.ok) {
-    return { urls: [], children: [], status: res.status, error: res.error ?? `HTTP ${res.status}` };
+    return { entries: [], children: [], status: res.status, error: res.error ?? `HTTP ${res.status}` };
   }
 
   const doc = parser.parse(res.body) as Record<string, any>;
   return {
-    urls: locsOf(doc?.urlset?.url),
+    entries: entriesOf(doc?.urlset?.url),
     children: locsOf(doc?.sitemapindex?.sitemap),
     status: res.status,
   };
@@ -95,29 +133,36 @@ export async function fetchSitemap(
   try {
     const root = await readSitemap(feedUrl, timeoutMs);
     if (root.error) {
-      return { ok: false, urls: [], totalLocs: 0, status: root.status, error: root.error };
+      return { ok: false, entries: [], totalLocs: 0, status: root.status, error: root.error };
     }
 
-    let all = root.urls;
+    let all = root.entries;
 
     // เป็น sitemap index → ไล่ลงไปอ่าน sitemap ย่อย (ชั้นเดียว ไม่ recurse ต่อ)
     if (all.length === 0 && root.children.length > 0) {
       for (const child of root.children.slice(0, MAX_CHILD_SITEMAPS)) {
         const sub = await readSitemap(child, timeoutMs);
-        all = all.concat(sub.urls);
+        all = all.concat(sub.entries);
       }
     }
 
     const totalLocs = all.length;
     const re = compilePattern(articlePattern);
-    const urls = re ? all.filter((u) => re.test(u)) : all;
+    const matched = re ? all.filter((e) => re.test(e.url)) : all;
 
     // sitemap เดียวกันอาจมี URL ซ้ำเมื่อรวมจากหลาย sitemap ย่อย
-    return { ok: true, urls: [...new Set(urls)], totalLocs, status: root.status };
+    // เก็บอันแรกที่เจอ แต่ถ้าอันหลังมีวันที่และอันแรกไม่มี ให้ใช้อันที่มีวันที่
+    const byUrl = new Map<string, SitemapEntry>();
+    for (const e of matched) {
+      const seen = byUrl.get(e.url);
+      if (!seen || (!seen.publishedAt && e.publishedAt)) byUrl.set(e.url, e);
+    }
+
+    return { ok: true, entries: [...byUrl.values()], totalLocs, status: root.status };
   } catch (err: any) {
     return {
       ok: false,
-      urls: [],
+      entries: [],
       totalLocs: 0,
       status: 0,
       error: `อ่าน sitemap ไม่สำเร็จ: ${err?.message ?? err}`,

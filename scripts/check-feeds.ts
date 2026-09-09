@@ -85,9 +85,9 @@ async function main() {
         continue;
       }
       console.log(
-        `  ✓    ${String(sm.urls.length).padStart(4)}        —         —      ${target.name}  (หน้าบทความ ${sm.urls.length} จาก ${sm.totalLocs} URL)`
+        `  ✓    ${String(sm.entries.length).padStart(4)}        —         —      ${target.name}  (หน้าบทความ ${sm.entries.length} จาก ${sm.totalLocs} URL)`
       );
-      if (sm.urls.length === 0) {
+      if (sm.entries.length === 0) {
         console.log(`         └─ ⚠ article_pattern คัดทิ้งหมด — ตรวจ pattern: ${target.article_pattern ?? '(ไม่ได้ตั้ง)'}`);
         broken.push(target);
       }
